@@ -12,7 +12,7 @@ export default function Navbar() {
           href="/"
           className="text-2xl font-medium tracking-tight text-black"
         >
-          EVRIS
+          evris
         </Link>
 
         {/* Navigation */}
