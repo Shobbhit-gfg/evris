@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 
 export default function GalleryPreview() {
   return (
@@ -10,54 +11,54 @@ export default function GalleryPreview() {
           <div className="grid h-[632px] grid-cols-12 grid-rows-6 gap-4">
 
             {/* Top Left Portrait */}
-            <div className="relative col-span-2 row-span-3 overflow-hidden rounded-[24px] group">
+            <Link href="/gallery" className="relative col-span-2 row-span-3 overflow-hidden rounded-[24px] group">
               <Image
                 src="/gallery/gallery5.webp"
                 alt="Gallery Image"
                 fill
-                className="object-cover transition-all duration-500 group-hover:scale-105"
+                className="object-cover transition-all duration-500 group-hover:scale-105 group-hover:brightness-90"
               />
-            </div>
+            </Link>
 
             {/* Top Middle Portrait */}
-            <div className="relative col-span-2 row-span-3 overflow-hidden rounded-[24px] group">
+            <Link href="/gallery" className="relative col-span-2 row-span-3 overflow-hidden rounded-[24px] group">
               <Image
                 src="/gallery/gallery2.webp"
                 alt="Gallery Image"
                 fill
-                className="object-cover transition-all duration-500 group-hover:scale-105"
+                className="object-cover transition-all duration-500 group-hover:scale-105 group-hover:brightness-90"
               />
-            </div>
+            </Link>
 
             {/* Center Landscape */}
-            <div className="relative col-span-4 row-span-6 overflow-hidden rounded-[24px] group">
+            <Link href="/gallery" className="relative col-span-4 row-span-6 overflow-hidden rounded-[24px] group">
               <Image
                 src="/gallery/gallery3.webp"
                 alt="Gallery Image"
                 fill
-                className="object-cover transition-all duration-500 group-hover:scale-105"
+                className="object-cover transition-all duration-500 group-hover:scale-105 group-hover:brightness-90"
               />
-            </div>
+            </Link>
 
             {/* Right Portrait */}
-            <div className="relative col-span-4 row-span-6 overflow-hidden rounded-[24px] group">
+            <Link href="/gallery" className="relative col-span-4 row-span-6 overflow-hidden rounded-[24px] group">
               <Image
                 src="/gallery/gallery1.webp"
                 alt="Gallery Image"
                 fill
-                className="object-cover transition-all duration-500 group-hover:scale-105"
+                className="object-cover transition-all duration-500 group-hover:scale-105 group-hover:brightness-90"
               />
-            </div>
+            </Link>
 
             {/* Bottom Landscape */}
-            <div className="relative col-span-4 row-span-3 overflow-hidden rounded-[24px] group">
+            <Link href="/gallery" className="relative col-span-4 row-span-3 overflow-hidden rounded-[24px] group">
               <Image
                 src="/gallery/gallery4.webp"
                 alt="Gallery Image"
                 fill
-                className="object-cover transition-all duration-500 group-hover:scale-105"
+                className="object-cover transition-all duration-500 group-hover:scale-105 group-hover:brightness-90"
               />
-            </div>
+            </Link>
 
           </div>
         </div>

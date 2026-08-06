@@ -2,8 +2,8 @@ import Link from "next/link";
 
 export default function Footer() {
   return (
-    <footer className="bg-black px-6 pt-16 pb-14 text-white">
-      <div className="mx-auto flex w-full max-w-[1440px] flex-wrap items-end justify-between gap-10 px-4">
+    <footer className="mt-[91px] flex h-[175px] w-full items-center bg-black px-[22px] text-white">
+      <div className="mx-auto flex w-full max-w-[1440px] flex-wrap items-center justify-between gap-10">
 
         {/* Brand */}
         <div>
@@ -19,7 +19,7 @@ export default function Footer() {
         </div>
 
         {/* Links */}
-        <nav className="flex flex-wrap gap-8 text-[20px] text-[#dddada]">
+        <nav className="flex flex-wrap items-center gap-8 text-[20px] text-[#dddada]">
           <Link href="#" className="transition hover:text-white">
             Youtube
           </Link>
