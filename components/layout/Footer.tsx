@@ -8,7 +8,7 @@ export default function Footer() {
         {/* Brand */}
         <div>
           <p className="heading-font text-[72px] font-semibold leading-none">
-            EVRIS
+            evris
           </p>
           <p className="body-font mt-2 text-[20px] text-[#dddada]">
             Built for smarter event memories.

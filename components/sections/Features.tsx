@@ -24,7 +24,7 @@ export default function Features() {
 
       {/* Heading */}
       <h2 className="heading-font text-[72px] font-semibold text-[#111111] leading-tight">
-        Why EVRIS ?
+        Why evris ?
       </h2>
 
       {/* Subtitle */}
