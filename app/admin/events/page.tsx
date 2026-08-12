@@ -5,7 +5,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
-import AdminNavbar from "@/components/layout/adminnavbar";
 
 const summaryStats = [
   { label: "Seminars & Workshops", count: 12, color: "#30bcc3" },
@@ -63,7 +62,6 @@ export default function AdminEventsPage() {
 
       <main className="pt-20">
         <div className="px-4">
-          <AdminNavbar />
 
           <div className="mx-auto mt-8 w-full max-w-[1342px] rounded-[49px] bg-[#d9d9d9] p-10">
             <h1 className="heading-font text-[clamp(36px,4.5vw,56px)] font-semibold text-[#111111]">
