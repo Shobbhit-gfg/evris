@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
 import AdminNavbar from "@/components/layout/adminnavbar";
+import { supabase } from "@/lib/supabase";
 
 const monthNames = [
   "January", "February", "March", "April", "May", "June",
@@ -13,11 +14,15 @@ const monthNames = [
 ];
 const weekdays = ["S", "M", "T", "W", "T", "F", "S"];
 
-// Days that show "uploaded" (filled) state, for demo purposes — swap for real data later
-const uploadedDays = new Set([1, 3, 8, 10, 15, 17, 22, 24, 29, 31]);
-
 export default function DashboardPage() {
-  const [viewDate, setViewDate] = useState(new Date(2026, 7, 1)); // Aug 2026, matching Figma
+  const [viewDate, setViewDate] = useState(new Date(2026, 7, 1)); // Aug 2026
+
+  // Dashboard Dynamic States
+  const [totalEvents, setTotalEvents] = useState<number>(0);
+  const [totalPhotos, setTotalPhotos] = useState<number>(0);
+  const [todaySearches, setTodaySearches] = useState<number>(0);
+  const [uploadedDays, setUploadedDays] = useState<Set<number>>(new Set());
+  const [loading, setLoading] = useState<boolean>(true);
 
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
@@ -29,8 +34,112 @@ export default function DashboardPage() {
     ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
   ];
 
-  const changeMonth = (delta: number) => {
-    setViewDate(new Date(year, month + delta, 1));
+  // Extracts days accurately avoiding UTC timezone offsets
+  const extractUploadedDays = (events: { event_date?: string | null }[], targetYear: number, targetMonth: number) => {
+    const days = new Set<number>();
+    events?.forEach((event) => {
+      if (!event.event_date) return;
+      
+      const parts = event.event_date.split("T")[0].split("-");
+      if (parts.length >= 3) {
+        const evYear = parseInt(parts[0], 10);
+        const evMonth = parseInt(parts[1], 10) - 1; // 0-indexed month
+        const evDay = parseInt(parts[2], 10);
+
+        if (evYear === targetYear && evMonth === targetMonth) {
+          days.add(evDay);
+        }
+      }
+    });
+    return days;
+  };
+
+  // Recursively counts photos inside the storage bucket (root + subfolders)
+  const countBucketPhotos = async (bucketName: string): Promise<number> => {
+    try {
+      const { data: items, error } = await supabase.storage
+        .from(bucketName)
+        .list("", { limit: 1000 });
+
+      if (error || !items) {
+        console.error("Storage list error:", error?.message);
+        return 0;
+      }
+
+      let fileCount = 0;
+
+      for (const item of items) {
+        if (item.name === ".emptyFolderPlaceholder") continue;
+
+        // If item has no 'id', it is a subfolder
+        if (!item.id) {
+          const { data: subFiles } = await supabase.storage
+            .from(bucketName)
+            .list(item.name, { limit: 1000 });
+
+          if (subFiles) {
+            fileCount += subFiles.filter(f => f.name !== ".emptyFolderPlaceholder").length;
+          }
+        } else {
+          // It's a direct file at root
+          fileCount++;
+        }
+      }
+
+      return fileCount;
+    } catch (err) {
+      console.error("Bucket search failed:", err);
+      return 0;
+    }
+  };
+
+  const fetchDashboardData = async () => {
+    try {
+      setLoading(true);
+
+      // 1. Fetch total events count from Database
+      const { count: eventCount } = await supabase
+        .from("events")
+        .select("*", { count: "exact", head: true });
+
+      // 2. Count total photos directly from 'event-images' Storage Bucket
+      const photosCount = await countBucketPhotos("event-images");
+
+      // 3. Fetch event dates for Calendar highlight
+      const { data: events } = await supabase
+        .from("events")
+        .select("event_date");
+
+      const activeDays = extractUploadedDays(events || [], year, month);
+
+      setUploadedDays(activeDays);
+      setTotalEvents(eventCount || 0);
+      setTotalPhotos(photosCount);
+      setTodaySearches(0); // Set default until search table is created
+    } catch (error) {
+      console.error("Dashboard fetch error:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, []);
+
+  const changeMonth = async (delta: number) => {
+    const nextDate = new Date(year, month + delta, 1);
+    setViewDate(nextDate);
+
+    const nextYear = nextDate.getFullYear();
+    const nextMonth = nextDate.getMonth();
+
+    const { data: events } = await supabase
+      .from("events")
+      .select("event_date");
+
+    const activeDays = extractUploadedDays(events || [], nextYear, nextMonth);
+    setUploadedDays(activeDays);
   };
 
   const recognitionAccuracy = 92; // %
@@ -47,20 +156,20 @@ export default function DashboardPage() {
           <div className="mx-auto mt-[24px] flex w-full max-w-[1301px] flex-wrap items-center justify-between gap-6 rounded-[34px] bg-[#eaeaea] p-10 shadow-[0px_4px_97.6px_8px_rgba(0,0,0,0.15)]">
             <div>
               <h1 className="heading-font text-[clamp(36px,4.5vw,56px)] font-semibold text-[#111111]">
-                Hi , Username
+                Hi, Admin
               </h1>
               <div className="mt-6 flex flex-col gap-3">
                 <p className="body-font flex items-center gap-2 text-[18px] text-[#8c8c8c]">
                   <span className="h-2 w-2 rounded-full bg-[#8c8c8c]" />
-                  Total Visitors <span className="font-semibold text-[#121212]">2,000+</span>
+                  Total Events <span className="font-semibold text-[#121212]">{loading ? "..." : totalEvents}</span>
                 </p>
                 <p className="body-font flex items-center gap-2 text-[18px] text-[#8c8c8c]">
                   <span className="h-2 w-2 rounded-full bg-[#8c8c8c]" />
-                  AI Face Recognition <span className="font-semibold text-[#121212]">1,590+</span>
+                  Total Photos <span className="font-semibold text-[#121212]">{loading ? "..." : totalPhotos}</span>
                 </p>
                 <p className="body-font flex items-center gap-2 text-[18px] text-[#8c8c8c]">
                   <span className="h-2 w-2 rounded-full bg-[#8c8c8c]" />
-                  Reports <span className="font-semibold text-[#121212]">10+</span>
+                  Storage Connected
                 </p>
               </div>
             </div>
@@ -109,9 +218,9 @@ export default function DashboardPage() {
                       {day && (
                         <span
                           className={`
-                            flex h-9 w-9 items-center justify-center rounded-full text-[15px]
+                            flex h-9 w-9 items-center justify-center rounded-full text-[15px] transition-colors
                             ${uploadedDays.has(day)
-                              ? "bg-[#a9d9dc] text-[#111111]"
+                              ? "bg-[#a9d9dc] font-semibold text-[#111111]"
                               : "bg-[#e4e4e4] text-[#8a8a8a]"}
                           `}
                         >
@@ -138,10 +247,12 @@ export default function DashboardPage() {
 
               <div className="mt-8 space-y-6">
                 <p className="body-font text-[22px] text-[#111111]/60">
-                  Face indexed<br /><span className="text-black">1543</span>
+                  Face indexed<br />
+                  <span className="font-semibold text-black">{loading ? "..." : totalPhotos}</span>
                 </p>
                 <p className="body-font text-[22px] text-[#111111]/60">
-                  Today&apos;s Searches<br /><span className="text-black">100</span>
+                  Today&apos;s Searches<br />
+                  <span className="font-semibold text-black">{loading ? "..." : todaySearches}</span>
                 </p>
               </div>
 
