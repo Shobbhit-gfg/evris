@@ -5,11 +5,10 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       {
         protocol: "https",
-        hostname: "www.figma.com",
+        hostname: "rvhcuhebabiwfdkckuue.supabase.co",
       },
     ],
   },
-  allowedDevOrigins: ["192.168.1.16"],
 };
 
 export default nextConfig;

@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { supabase } from "@/lib/supabase";
 import Image from "next/image";
 import Link from "next/link";
 import { Search, Calendar, ChevronRight, X } from "lucide-react";
 import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
-import adminnavbar from "@/components/layout/adminnavbar";
 
 const categoryColors: Record<string, string> = {
   Seminar: "#30bcc3",
@@ -15,84 +15,51 @@ const categoryColors: Record<string, string> = {
   Fest: "#123c3e",
 };
 
-const events = [
-  {
-    title: "AECE Personal Interview",
-    date: "Aug 3, 2026",
-    photos: "18 photos",
-    category: "Seminar",
-    image: "/eventsection/seminar&workshop/1.jpg",
-  },
-  {
-    title: "CS/IT Orientation",
-    date: "Aug 3, 2026",
-    photos: "24 photos",
-    category: "Seminar",
-    image: "/eventsection/seminar&workshop/2.jpg",
-  },
-  {
-    title: "Resume Building Workshop",
-    date: "Jul 28, 2026",
-    photos: "15 photos",
-    category: "Workshop",
-    image: "/eventsection/seminar&workshop/3.jpg",
-  },
-  {
-    title: "Nasha Mukt Yuva Awareness",
-    date: "Jul 30, 2026",
-    photos: "20 photos",
-    category: "Seminar",
-    image: "/eventsection/seminar&workshop/4.jpg",
-  },
-  {
-    title: "#AryabhattKaZero Night",
-    date: "Aug 5, 2026",
-    photos: "32 photos",
-    category: "Cultural",
-    image: "/eventsection/fest&event/1.jpg",
-  },
-  {
-    title: "Farewell 2026",
-    date: "Jun 12, 2026",
-    photos: "45 photos",
-    category: "Cultural",
-    image: "/eventsection/fest&event/2.jpg",
-  },
-  {
-    title: "Final Whistle — Seniors Match",
-    date: "May 20, 2026",
-    photos: "28 photos",
-    category: "Cultural",
-    image: "/eventsection/fest&event/3.jpg",
-  },
-  {
-    title: "TATVA 2K26",
-    date: "Apr 3, 2026",
-    photos: "60 photos",
-    category: "Fest",
-    image: "/eventsection/fest&event/4.jpg",
-  },
-];
-
 const filters = ["All", "Seminar", "Workshop", "Fest", "Cultural"];
-
-// Converts "Aug 3, 2026" -> "2026-08-03" so it can be compared to an <input type="date"> value
-function toISODate(dateStr: string) {
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return "";
-  return d.toISOString().split("T")[0];
-}
 
 export default function EventsPage() {
   const [activeFilter, setActiveFilter] = useState("All");
   const [query, setQuery] = useState("");
   const [dateFilter, setDateFilter] = useState("");
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [events, setEvents] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchEvents();
+  }, []);
+
+  const fetchEvents = async () => {
+    const { data, error } = await supabase
+      .from("events")
+      .select("*")
+      .order("event_date", { ascending: false });
+
+    if (error) {
+      console.error("Fetch Error:", error);
+      setLoading(false);
+      return;
+    }
+
+    setEvents(data || []);
+    console.log("Events fetched:", data);
+    console.table(data);
+    setLoading(false);
+  };
 
   const filtered = events.filter((e) => {
-    const matchesFilter = activeFilter === "All" || e.category === activeFilter;
-    const matchesQuery = e.title.toLowerCase().includes(query.toLowerCase());
-    const matchesDate = !dateFilter || toISODate(e.date) === dateFilter;
+    const matchesFilter =
+      activeFilter === "All" ||
+      (e.category && e.category === activeFilter);
+
+    const matchesQuery =
+      e.title?.toLowerCase().includes(query.toLowerCase());
+
+    const matchesDate =
+      !dateFilter ||
+      (e.event_date &&
+        new Date(e.event_date).toISOString().split("T")[0] === dateFilter);
+
     return matchesFilter && matchesQuery && matchesDate;
   });
 
@@ -127,9 +94,11 @@ export default function EventsPage() {
                 onClick={() => setShowDatePicker((v) => !v)}
                 className={`
                   flex h-[58px] items-center gap-2 rounded-full border px-6 text-[18px] font-medium transition
-                  ${dateFilter
-                    ? "border-black bg-black text-white"
-                    : "border-[#d9d9d9] bg-[#f6f6f6] text-[#4d4d4d] hover:bg-[#eeeeee]"}
+                  ${
+                    dateFilter
+                      ? "border-black bg-black text-white"
+                      : "border-[#d9d9d9] bg-[#f6f6f6] text-[#4d4d4d] hover:bg-[#eeeeee]"
+                  }
                 `}
               >
                 <Calendar className="h-5 w-5" />
@@ -176,9 +145,11 @@ export default function EventsPage() {
                 onClick={() => setActiveFilter(f)}
                 className={`
                   rounded-full px-[26px] py-[14px] text-[17px] font-medium transition-all duration-200
-                  ${activeFilter === f
-                    ? "bg-black text-white"
-                    : "border border-[#d9d9d9] bg-[#f6f6f6] text-[#404040] hover:bg-[#eeeeee]"}
+                  ${
+                    activeFilter === f
+                      ? "bg-black text-white"
+                      : "border border-[#d9d9d9] bg-[#f6f6f6] text-[#404040] hover:bg-[#eeeeee]"
+                  }
                 `}
               >
                 {f}
@@ -186,40 +157,70 @@ export default function EventsPage() {
             ))}
           </div>
 
-          {/* Event Cards Grid */}
-          <div className="mt-14 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-            {filtered.map((event) => (
-              <Link
-                key={event.title}
-                href="#"
-                className="block overflow-hidden rounded-[28px] bg-white shadow-[0px_6px_24px_rgba(0,0,0,0.08)] transition-all duration-300 hover:-translate-y-1 hover:shadow-[0px_12px_32px_rgba(0,0,0,0.14)]"
-              >
-                <div className="relative h-[190px] w-full">
-                  <Image src={event.image} alt={event.title} fill className="object-cover" />
-                  <span
-                    className="absolute left-4 top-4 rounded-full px-[14px] py-[6px] text-[13px] font-medium text-white"
-                    style={{ backgroundColor: categoryColors[event.category] }}
-                  >
-                    {event.category}
-                  </span>
-                </div>
-                <div className="p-5">
-                  <p className="body-font text-[19px] font-semibold text-[#121212]">
-                    {event.title}
-                  </p>
-                  <p className="body-font mt-2 text-[14px] text-[#8c8c8c]">{event.date}</p>
-                  <div className="mt-5 flex items-center justify-between border-t border-[#eaeaea] pt-4">
-                    <span className="body-font text-[15px] font-medium text-[#4d4d4d]">
-                      {event.photos}
-                    </span>
-                    <ChevronRight className="h-[18px] w-[18px] text-[#4d4d4d]" />
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
+          {/* Loading UI */}
+          {loading && (
+            <p className="mt-10 text-center text-lg text-[#737378]">
+              Loading events...
+            </p>
+          )}
 
-          {filtered.length === 0 && (
+          {/* Event Cards Grid */}
+          {!loading && (
+            <div className="mt-14 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+              {filtered.map((event) => (
+                <Link
+                  key={event.id}
+                  href={`/events/${event.id}`}
+                  className="block overflow-hidden rounded-[28px] bg-white shadow-[0px_6px_24px_rgba(0,0,0,0.08)] transition-all duration-300 hover:-translate-y-1 hover:shadow-[0px_12px_32px_rgba(0,0,0,0.14)]"
+                >
+                  <div className="relative h-[190px] w-full">
+                    <Image
+                      src={
+                        event.cover_image_url?.trim() ||
+                        event.cover_image?.trim() ||
+                        "/gallery/gallery1.webp"
+                      }
+                      alt={event.title || "Event"}
+                      fill
+                      className="object-cover"
+                    />
+
+                    <span
+                      className="absolute left-4 top-4 rounded-full px-[14px] py-[6px] text-[13px] font-medium text-white"
+                      style={{
+                        backgroundColor:
+                          categoryColors[event.category] || "#1a8287",
+                      }}
+                    >
+                      {event.category || "Event"}
+                    </span>
+                  </div>
+
+                  <div className="p-5">
+                    <p className="body-font text-[19px] font-semibold text-[#121212]">
+                      {event.title}
+                    </p>
+
+                    <p className="body-font mt-2 text-[14px] text-[#8c8c8c]">
+                      {event.event_date
+                        ? new Date(event.event_date).toLocaleDateString()
+                        : "No Date"}
+                    </p>
+
+                    <div className="mt-5 flex items-center justify-between border-t border-[#eaeaea] pt-4">
+                      <span className="body-font text-[15px] font-medium text-[#4d4d4d]">
+                        Event Gallery
+                      </span>
+
+                      <ChevronRight className="h-[18px] w-[18px] text-[#4d4d4d]" />
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+
+          {!loading && filtered.length === 0 && (
             <p className="body-font mt-14 text-center text-[18px] text-[#8c8c8c]">
               No events match your search{dateFilter ? " for this date" : ""}.
             </p>
