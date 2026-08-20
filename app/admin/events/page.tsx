@@ -7,29 +7,76 @@ import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
 import AdminNavbar from "@/components/layout/adminnavbar";
 
-const summaryStats = [
-  { label: "Seminars & Workshops", count: 12, color: "#30bcc3" },
-  { label: "Pending Approval", count: 3, color: "#1a8287" },
-  { label: "Fests & Concerts", count: 9, color: "#123c3e" },
-];
+type AnalyticsState = {
+  seminars: number;
+  workshops: number;
+  fests: number;
+  cultural: number;
+  total: number;
+};
 
 export default function AdminEventsPage() {
   const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Dynamic analytics state for 4 categories
+  const [stats, setStats] = useState<AnalyticsState>({
+    seminars: 0,
+    workshops: 0,
+    fests: 0,
+    cultural: 0,
+    total: 0,
+  });
+
   const fetchEvents = async () => {
-    const { data, error } = await supabase
-      .from("events")
-      .select("*")
-      .order("created_at", { ascending: false });
+    try {
+      setLoading(true);
 
-    if (error) {
-      console.error("Fetch Error:", error);
-      return;
+      const { data, error } = await supabase
+        .from("events")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("Fetch Error:", error);
+        return;
+      }
+
+      const allEvents = data || [];
+      setEvents(allEvents);
+
+      // Compute Real-time Analytics across 4 categories
+      const computedStats = allEvents.reduce(
+        (acc, ev) => {
+          const type = (ev.category || ev.type || ev.event_type || "").toLowerCase();
+
+          if (type.includes("seminar") || type.includes("webinar")) {
+            acc.seminars += 1;
+          } else if (type.includes("workshop") || type.includes("training")) {
+            acc.workshops += 1;
+          } else if (type.includes("fest") || type.includes("concert")) {
+            acc.fests += 1;
+          } else if (type.includes("cultural") || type.includes("arts") || type.includes("dance")) {
+            acc.cultural += 1;
+          }
+
+          return acc;
+        },
+        {
+          seminars: 0,
+          workshops: 0,
+          fests: 0,
+          cultural: 0,
+          total: allEvents.length,
+        }
+      );
+
+      setStats(computedStats);
+    } catch (err) {
+      console.error("Unexpected fetch failure:", err);
+    } finally {
+      setLoading(false);
     }
-
-    setEvents(data || []);
-    setLoading(false);
   };
 
   useEffect(() => {
@@ -37,16 +84,10 @@ export default function AdminEventsPage() {
   }, []);
 
   const handleDelete = async (id: string) => {
-    const confirmed = confirm(
-      "Delete this event? This can't be undone."
-    );
-
+    const confirmed = confirm("Delete this event? This can't be undone.");
     if (!confirmed) return;
 
-    const { error } = await supabase
-      .from("events")
-      .delete()
-      .eq("id", id);
+    const { error } = await supabase.from("events").delete().eq("id", id);
 
     if (error) {
       console.error("Delete Error:", error);
@@ -57,6 +98,37 @@ export default function AdminEventsPage() {
     fetchEvents();
   };
 
+  // Dynamic width calculation based on total uploads
+  const getBarWidth = (count: number) => {
+    if (stats.total === 0 || count === 0) return "18%"; // Default baseline width
+    const percentage = Math.round((count / stats.total) * 100);
+    return `${Math.max(percentage, 22)}%`; // Keeps label legible
+  };
+
+  // 4 Category Configuration
+  const summaryStats = [
+    {
+      label: "Seminars",
+      width: getBarWidth(stats.seminars),
+      color: "#30bcc3",
+    },
+    {
+      label: "Workshops",
+      width: getBarWidth(stats.workshops),
+      color: "#1a8287",
+    },
+    {
+      label: "Fests",
+      width: getBarWidth(stats.fests),
+      color: "#123c3e",
+    },
+    {
+      label: "Cultural",
+      width: getBarWidth(stats.cultural),
+      color: "#235a5e",
+    },
+  ];
+
   return (
     <>
       <Navbar />
@@ -65,19 +137,24 @@ export default function AdminEventsPage() {
         <div className="px-4">
           <AdminNavbar />
 
-          <div className="mx-auto mt-8 w-full max-w-[1342px] rounded-[49px] bg-[#d9d9d9] p-10">
-            <h1 className="heading-font text-[clamp(36px,4.5vw,56px)] font-semibold text-[#111111]">
+          {/* Event Analysis Container */}
+          <div className="mx-auto mt-8 w-full max-w-[1342px] rounded-[49px] bg-[#d9d9d9] p-8 md:p-10">
+            <h1 className="heading-font text-[clamp(32px,4vw,48px)] font-semibold text-[#111111]">
               Event Analysis
             </h1>
 
-            <div className="mt-6 flex flex-col gap-4">
+            {/* Compact 4-bar list layout */}
+            <div className="mt-5 flex flex-col gap-2.5">
               {summaryStats.map((stat) => (
                 <div
                   key={stat.label}
-                  className="flex h-[54px] w-fit items-center rounded-full px-8"
-                  style={{ backgroundColor: stat.color }}
+                  className="flex h-[42px] items-center rounded-full px-6 transition-all duration-500 ease-out"
+                  style={{
+                    backgroundColor: stat.color,
+                    width: stat.width,
+                  }}
                 >
-                  <span className="body-font text-[18px] font-medium text-white">
+                  <span className="body-font text-[15px] font-medium text-white whitespace-nowrap">
                     {stat.label}
                   </span>
                 </div>
@@ -99,11 +176,8 @@ export default function AdminEventsPage() {
           </div>
 
           <div className="mx-auto mb-20 mt-6 flex w-full max-w-[1301px] flex-col gap-6 rounded-[34px] bg-[#eaeaea] p-8">
-
             {loading && (
-              <p className="text-center text-lg">
-                Loading events...
-              </p>
+              <p className="text-center text-lg">Loading events...</p>
             )}
 
             {!loading && events.length === 0 && (
@@ -113,20 +187,26 @@ export default function AdminEventsPage() {
             )}
 
             {events.map((event) => {
-              const eventDate =
-                event.date || event.event_date;
-
-              const isUpcoming =
-                new Date(eventDate) > new Date();
+              const eventId = event.id || event._id || event.event_id;
+              const eventDate = event.date || event.event_date;
+              const isUpcoming = eventDate
+                ? new Date(eventDate) > new Date()
+                : false;
 
               return (
                 <div
-                  key={event.id}
+                  key={eventId}
                   className="flex flex-wrap items-center gap-6 rounded-[24px] bg-white p-5"
                 >
-                  <div
-                    className="h-[90px] w-[90px] shrink-0 rounded-[18px] bg-[#30bcc3]"
-                  />
+                  <div className="h-[90px] w-[90px] shrink-0 rounded-[18px] bg-[#30bcc3] overflow-hidden">
+                    {(event.cover_image_url || event.cover_image) && (
+                      <img
+                        src={event.cover_image_url || event.cover_image}
+                        alt={event.title}
+                        className="h-full w-full object-cover"
+                      />
+                    )}
+                  </div>
 
                   <div className="flex flex-1 flex-col gap-1">
                     <p className="body-font text-[22px] font-semibold text-[#121212]">
@@ -156,15 +236,16 @@ export default function AdminEventsPage() {
                     {isUpcoming ? "Upcoming" : "Completed"}
                   </span>
 
+                  {/* Updated Route: Matches app/admin/edit-event/[id]/page.tsx */}
                   <Link
-                    href={`/admin/events/${event.id}/edit`}
+                    href={`/admin/events/${eventId}/edit`}
                     className="body-font rounded-full border-[1.5px] border-black px-5 py-2 text-[14px] font-medium text-[#121212] transition hover:bg-black hover:text-white"
                   >
                     Edit
                   </Link>
 
                   <button
-                    onClick={() => handleDelete(event.id)}
+                    onClick={() => handleDelete(eventId)}
                     className="body-font rounded-full bg-black px-5 py-2 text-[14px] font-medium text-white transition hover:bg-[#333]"
                   >
                     Delete
