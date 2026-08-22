@@ -29,9 +29,9 @@ export default function Footer() {
           <Link href="#" className="transition hover:text-white">
             Facebook
           </Link>
-          <Link href="#" className="transition hover:text-white">
-            Report
-          </Link>
+          <Link href="/submit-report" className="transition hover:text-white">
+  Report
+</Link>
           <Link href="/contact" className="transition hover:text-white">
             Contact Us
           </Link>
