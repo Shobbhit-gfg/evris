@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
 import AdminNavbar from "@/components/layout/adminnavbar";
+import { getFaceEmbedding } from "@/lib/faceApi"; // 🤖 Added Face API import
 
 const placeholderColors = [
   "#30bcc3", "#1a8287", "rgba(18,60,62,0.5)",
@@ -67,7 +68,6 @@ export default function CreateEventPage() {
   const handleCreateEvent = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
-    // Debug Log #1: Button trigger & Form Payload
     console.log("Button clicked");
     console.log({
       title,
@@ -100,8 +100,6 @@ export default function CreateEventPage() {
         } = supabase.storage.from("event-images").getPublicUrl(coverFileName);
 
         coverImageUrl = publicUrl;
-        
-        // Debug Log #2: Cover Upload Verification
         console.log("Cover URL:", coverImageUrl);
       }
 
@@ -121,13 +119,12 @@ export default function CreateEventPage() {
         .select()
         .single();
 
-      // Debug Log #3: Insert Outcome
       console.log("Inserted Event:", eventData);
       console.log("Insert Error:", eventError);
 
       if (eventError) throw eventError;
 
-      // 3. Upload rest of photos and create entries in 'photos' table
+      // 3. Upload rest of photos and create entries in 'photos' table + Extract Vectors
       if (photos.length > 0 && eventData) {
         const eventId = eventData.id;
 
@@ -152,6 +149,38 @@ export default function CreateEventPage() {
 
             if (photoDbError) {
               console.log("Photo Record Insert Error:", photoDbError);
+            } else {
+              // --- 🤖 START FACIAL VECTOR EXTRACTION ---
+              try {
+                await new Promise<void>((resolve) => {
+                  const img = new Image();
+                  const objectUrl = URL.createObjectURL(photo);
+                  img.src = objectUrl;
+
+                  img.onload = async () => {
+                    const embedding = await getFaceEmbedding(img);
+                    if (embedding) {
+                      await supabase.from("face_embeddings").insert({
+                        event_id: eventId,
+                        image_url: publicUrl,
+                        embedding: embedding,
+                      });
+                      console.log(`✅ Face indexed for ${photo.name}`);
+                    }
+                    URL.revokeObjectURL(objectUrl); // Clean up memory
+                    resolve();
+                  };
+
+                  img.onerror = () => {
+                    console.error("Failed to load image for face detection");
+                    URL.revokeObjectURL(objectUrl);
+                    resolve();
+                  };
+                });
+              } catch (faceErr) {
+                console.error("Face Extraction Error:", faceErr);
+              }
+              // --- END FACIAL VECTOR EXTRACTION ---
             }
           } else {
             console.log("Photo Upload Storage Error:", photoUploadError);
@@ -164,7 +193,6 @@ export default function CreateEventPage() {
         router.push("/admin/events");
       }, 1000);
     } catch (err: any) {
-      // Debug Alert on Failures
       console.error("FULL ERROR:", err);
       alert(JSON.stringify(err, null, 2));
       setMessage(err.message || "An unexpected error occurred.");
