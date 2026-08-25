@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Python Virtual Environment
+evris-face-api/venv/
+venv/
+__pycache__/

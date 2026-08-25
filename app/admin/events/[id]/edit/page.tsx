@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
 import AdminNavbar from "@/components/layout/adminnavbar";
+import { getFaceEmbeddingFromServer } from "@/lib/api/extractFace"; // 🐍 Python Microservice Import
 
 function FloatingField({
   label,
@@ -195,12 +196,32 @@ export default function EditEventPage({
             continue;
           }
 
+          const { data: publicUrlData } = supabase.storage
+            .from("event-images")
+            .getPublicUrl(filePath);
+          
+          const uploadedUrl = publicUrlData.publicUrl;
+
           if (!updatedCoverUrl) {
-            const { data: publicUrlData } = supabase.storage
-              .from("event-images")
-              .getPublicUrl(filePath);
-            updatedCoverUrl = publicUrlData.publicUrl;
+            updatedCoverUrl = uploadedUrl;
           }
+
+          // --- 🐍 START PYTHON AI VECTOR EXTRACTION ---
+          try {
+            const embedding = await getFaceEmbeddingFromServer(file);
+
+            if (embedding) {
+              await supabase.from("face_embeddings").insert({
+                event_id: id,
+                image_url: uploadedUrl,
+                embedding: embedding, // 512-dim ArcFace vector
+              });
+              console.log(`✅ Face indexed via Python for ${file.name}`);
+            }
+          } catch (faceErr) {
+            console.error("Python Face Extraction Error:", faceErr);
+          }
+          // --- END PYTHON AI VECTOR EXTRACTION ---
         }
       }
 

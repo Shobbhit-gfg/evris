@@ -7,10 +7,15 @@ import { supabase } from "@/lib/supabase";
 import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
 import AdminNavbar from "@/components/layout/adminnavbar";
+import { getFaceEmbeddingFromServer } from "@/lib/api/extractFace";
 
 const placeholderColors = [
-  "#30bcc3", "#1a8287", "rgba(18,60,62,0.5)",
-  "rgba(48,188,195,0.5)", "rgba(26,130,135,0.5)", "rgba(18,60,62,0.5)",
+  "#30bcc3",
+  "#1a8287",
+  "rgba(18,60,62,0.5)",
+  "rgba(48,188,195,0.5)",
+  "rgba(26,130,135,0.5)",
+  "rgba(18,60,62,0.5)",
 ];
 
 function FloatingField({
@@ -39,24 +44,44 @@ export default function CreateEventPage() {
   const [eventDate, setEventDate] = useState("");
   const [location, setLocation] = useState("");
   const [description, setDescription] = useState("");
+
   const [photos, setPhotos] = useState<File[]>([]);
   const [coverIndex, setCoverIndex] = useState(0);
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
+  // --------------------------------------------------
+  // ADD PHOTOS
+  // --------------------------------------------------
+
   const handleAddPhotos = (files: FileList | null) => {
     if (!files) return;
-    setPhotos((prev) => [...prev, ...Array.from(files)].slice(0, 20));
+
+    setPhotos((prev) => {
+      const newPhotos = [...prev, ...Array.from(files)];
+      return newPhotos.slice(0, 20);
+    });
   };
+
+  // --------------------------------------------------
+  // DRAG & DROP
+  // --------------------------------------------------
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     handleAddPhotos(e.dataTransfer.files);
   };
 
+  // --------------------------------------------------
+  // REMOVE PHOTO
+  // --------------------------------------------------
+
   const handleRemovePhoto = (index: number) => {
-    setPhotos((prev) => prev.filter((_, idx) => idx !== index));
+    setPhotos((prev) =>
+      prev.filter((_, photoIndex) => photoIndex !== index)
+    );
+
     setCoverIndex((prev) => {
       if (index === prev) return 0;
       if (index < prev) return prev - 1;
@@ -64,11 +89,17 @@ export default function CreateEventPage() {
     });
   };
 
+  // --------------------------------------------------
+  // CREATE EVENT
+  // --------------------------------------------------
+
   const handleCreateEvent = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
-    // Debug Log #1: Button trigger & Form Payload
-    console.log("Button clicked");
+    console.log("=================================");
+    console.log("🚀 CREATE EVENT STARTED");
+    console.log("=================================");
+
     console.log({
       title,
       category,
@@ -76,36 +107,52 @@ export default function CreateEventPage() {
       location,
       description,
       photosCount: photos.length,
+      coverIndex,
     });
 
     setLoading(true);
     setMessage("");
 
     try {
+      // ==================================================
+      // 1. UPLOAD COVER IMAGE
+      // ==================================================
+
       let coverImageUrl = "";
 
-      // 1. Upload cover image first (if photos exist)
       if (photos.length > 0) {
         const coverPhoto = photos[coverIndex];
         const coverFileName = `cover-${Date.now()}-${coverPhoto.name}`;
+
+        console.log("📸 Uploading cover:", coverFileName);
 
         const { error: uploadError } = await supabase.storage
           .from("event-images")
           .upload(coverFileName, coverPhoto);
 
-        if (uploadError) throw uploadError;
+        if (uploadError) {
+          console.error("❌ Cover upload error:", uploadError);
+          throw uploadError;
+        }
 
         const {
           data: { publicUrl },
-        } = supabase.storage.from("event-images").getPublicUrl(coverFileName);
+        } = supabase.storage
+          .from("event-images")
+          .getPublicUrl(coverFileName);
 
         coverImageUrl = publicUrl;
-        
-        // Debug Log #2: Cover Upload Verification
+
+        console.log("✅ Cover uploaded");
         console.log("Cover URL:", coverImageUrl);
       }
 
-      // 2. Insert event record into database
+      // ==================================================
+      // 2. CREATE EVENT
+      // ==================================================
+
+      console.log("📝 Creating event...");
+
       const { data: eventData, error: eventError } = await supabase
         .from("events")
         .insert([
@@ -121,57 +168,164 @@ export default function CreateEventPage() {
         .select()
         .single();
 
-      // Debug Log #3: Insert Outcome
       console.log("Inserted Event:", eventData);
       console.log("Insert Error:", eventError);
 
-      if (eventError) throw eventError;
+      if (eventError) {
+        throw eventError;
+      }
 
-      // 3. Upload rest of photos and create entries in 'photos' table
-      if (photos.length > 0 && eventData) {
-        const eventId = eventData.id;
+      if (!eventData) {
+        throw new Error("Event was created but no event data was returned.");
+      }
+
+      const eventId = eventData.id;
+
+      console.log("=================================");
+      console.log("✅ EVENT CREATED");
+      console.log("Event ID:", eventId);
+      console.log("=================================");
+
+      // ==================================================
+      // 3. PROCESS EVERY PHOTO
+      // ==================================================
+
+      if (photos.length > 0) {
+        console.log(`📷 Processing ${photos.length} photos...`);
 
         for (let i = 0; i < photos.length; i++) {
           const photo = photos[i];
-          const fileName = `${eventId}/${Date.now()}-${photo.name}`;
+
+          console.log("---------------------------------");
+          console.log(`📷 Processing photo ${i + 1}/${photos.length}`);
+          console.log("Filename:", photo.name);
+
+          // ------------------------------------------------
+          // 3A. UPLOAD PHOTO TO STORAGE
+          // ------------------------------------------------
+
+          const fileName = `${eventId}/${Date.now()}-${i}-${photo.name}`;
+
+          console.log("Uploading:", fileName);
 
           const { error: photoUploadError } = await supabase.storage
             .from("event-images")
             .upload(fileName, photo);
 
-          if (!photoUploadError) {
-            const {
-              data: { publicUrl },
-            } = supabase.storage.from("event-images").getPublicUrl(fileName);
+          if (photoUploadError) {
+            console.error("❌ Photo Storage Upload Error:", photoUploadError);
+            continue;
+          }
 
-            const { error: photoDbError } = await supabase.from("photos").insert({
+          console.log("✅ Photo uploaded to Storage");
+
+          // ------------------------------------------------
+          // 3B. GET PUBLIC URL
+          // ------------------------------------------------
+
+          const {
+            data: { publicUrl },
+          } = supabase.storage
+            .from("event-images")
+            .getPublicUrl(fileName);
+
+          console.log("Photo URL:", publicUrl);
+
+          // ------------------------------------------------
+          // 3C. INSERT INTO PHOTOS TABLE
+          // ------------------------------------------------
+
+          const { data: photoData, error: photoDbError } = await supabase
+            .from("photos")
+            .insert({
               event_id: eventId,
               image_url: publicUrl,
-              is_cover: i === coverIndex,
-            });
+            })
+            .select()
+            .single();
 
-            if (photoDbError) {
-              console.log("Photo Record Insert Error:", photoDbError);
-            }
+          if (photoDbError) {
+            console.error("❌ Photo Database Insert Error:", photoDbError);
           } else {
-            console.log("Photo Upload Storage Error:", photoUploadError);
+            console.log("✅ Photo record inserted:", photoData);
+
+            // ==================================================
+            // 3D. EXTRACT FACE EMBEDDING USING PYTHON
+            // ==================================================
+
+            console.log("🐍 Sending image to Python Face API...");
+
+            try {
+              const embedding = await getFaceEmbeddingFromServer(photo);
+
+              if (embedding) {
+                console.log(`✅ Face embedding received for ${photo.name}`);
+                console.log("Embedding dimensions:", embedding.length);
+
+                // ----------------------------------------------
+                // SAVE VECTOR TO SUPABASE
+                // ----------------------------------------------
+
+                const { data: embeddingData, error: embeddingError } = await supabase
+                  .from("face_embeddings")
+                  .insert({
+                    event_id: eventId,
+                    image_url: publicUrl,
+                    embedding: embedding,
+                  })
+                  .select()
+                  .single();
+
+                if (embeddingError) {
+                  console.error("❌ Face Embedding Database Error:", embeddingError);
+                  console.error("Embedding error details:", JSON.stringify(embeddingError, null, 2));
+                } else {
+                  console.log("=================================");
+                  console.log("🎉 FACE VECTOR SAVED SUCCESSFULLY");
+                  console.log("Photo:", photo.name);
+                  console.log("Vector dimensions:", embedding.length);
+                  console.log("Embedding ID:", embeddingData?.id);
+                  console.log("Event ID:", eventId);
+                  console.log("=================================");
+                }
+              } else {
+                console.log(`⚠️ No face embedding returned for ${photo.name}`);
+              }
+            } catch (faceErr) {
+              console.error(`❌ Python Face Extraction Error for ${photo.name}:`, faceErr);
+            }
           }
         }
       }
 
-      setMessage("Event created successfully!");
+      // ==================================================
+      // 4. SUCCESS
+      // ==================================================
+
+      console.log("=================================");
+      console.log("🎉 EVENT CREATION COMPLETE");
+      console.log("=================================");
+
+      setMessage("Event created successfully! Photos and face data are being processed.");
+
       setTimeout(() => {
         router.push("/admin/events");
-      }, 1000);
+      }, 1500);
     } catch (err: any) {
-      // Debug Alert on Failures
-      console.error("FULL ERROR:", err);
-      alert(JSON.stringify(err, null, 2));
-      setMessage(err.message || "An unexpected error occurred.");
+      console.error("=================================");
+      console.error("❌ FULL CREATE EVENT ERROR");
+      console.error("=================================");
+      console.error(err);
+
+      setMessage(err?.message || "An unexpected error occurred.");
     } finally {
       setLoading(false);
     }
   };
+
+  // ======================================================
+  // UI
+  // ======================================================
 
   return (
     <>
@@ -182,21 +336,31 @@ export default function CreateEventPage() {
           <AdminNavbar />
 
           <div className="mx-auto mt-8 w-full max-w-[1174px]">
+            {/* HEADER */}
             <h1 className="heading-font text-[clamp(32px,4vw,40px)] font-semibold text-[#121212]">
               Create / Upload Event
             </h1>
+
             <p className="body-font mt-2 text-[18px] text-[#737378]">
               Fill in the event details and upload photos to publish a new event.
             </p>
 
-            <form onSubmit={handleCreateEvent} className="mt-10 flex flex-col gap-8 lg:flex-row">
-              {/* Event Details Card */}
+            {/* FORM */}
+            <form
+              onSubmit={handleCreateEvent}
+              className="mt-10 flex flex-col gap-8 lg:flex-row"
+            >
+              {/* ==========================================
+                  EVENT DETAILS
+              ========================================== */}
+
               <div className="w-full max-w-[680px] rounded-[44px] bg-[rgba(237,237,237,0.6)] p-10">
                 <h2 className="body-font text-[26px] font-semibold text-[#121212]">
                   Event Details
                 </h2>
 
                 <div className="mt-6 flex flex-col gap-4">
+                  {/* TITLE */}
                   <FloatingField label="Event Title">
                     <input
                       type="text"
@@ -208,6 +372,7 @@ export default function CreateEventPage() {
                     />
                   </FloatingField>
 
+                  {/* CATEGORY */}
                   <FloatingField label="Category">
                     <select
                       value={category}
@@ -215,7 +380,9 @@ export default function CreateEventPage() {
                       required
                       className="body-font absolute left-2 top-[24px] w-[calc(100%-16px)] bg-transparent text-[16px] text-[#121212] outline-none"
                     >
-                      <option value="" disabled>Seminar / Workshop / Fest / Cultural</option>
+                      <option value="" disabled>
+                        Seminar / Workshop / Fest / Cultural
+                      </option>
                       <option value="Seminar">Seminar</option>
                       <option value="Workshop">Workshop</option>
                       <option value="Fest">Fest</option>
@@ -223,6 +390,7 @@ export default function CreateEventPage() {
                     </select>
                   </FloatingField>
 
+                  {/* DATE */}
                   <FloatingField label="Date">
                     <input
                       type="datetime-local"
@@ -233,6 +401,7 @@ export default function CreateEventPage() {
                     />
                   </FloatingField>
 
+                  {/* LOCATION */}
                   <FloatingField label="Location">
                     <input
                       type="text"
@@ -243,10 +412,12 @@ export default function CreateEventPage() {
                     />
                   </FloatingField>
 
+                  {/* DESCRIPTION */}
                   <div className="relative h-[160px] w-full rounded-[20px] bg-[#f6f6f6]">
                     <label className="body-font pointer-events-none absolute left-2 top-[8px] text-[14px] font-medium text-[#66666b]">
                       Description
                     </label>
+
                     <textarea
                       value={description}
                       onChange={(e) => setDescription(e.target.value)}
@@ -257,12 +428,16 @@ export default function CreateEventPage() {
                 </div>
               </div>
 
-              {/* Upload Photos Card */}
+              {/* ==========================================
+                  UPLOAD PHOTOS
+              ========================================== */}
+
               <div className="w-full rounded-[44px] bg-[rgba(237,237,237,0.6)] p-10 lg:w-[460px]">
                 <h2 className="body-font text-[26px] font-semibold text-[#121212]">
                   Upload Photos
                 </h2>
 
+                {/* DROP AREA */}
                 <div
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={handleDrop}
@@ -286,14 +461,16 @@ export default function CreateEventPage() {
                   </p>
                 </div>
 
-                {/* Photo Grid */}
+                {/* PHOTO GRID */}
                 <div className="mt-6 grid grid-cols-3 gap-3">
                   {photos.length === 0
                     ? placeholderColors.map((color, i) => (
                         <div
                           key={i}
                           className="aspect-square rounded-[14px]"
-                          style={{ backgroundColor: color }}
+                          style={{
+                            backgroundColor: color,
+                          }}
                         />
                       ))
                     : photos.map((file, i) => (
@@ -308,13 +485,11 @@ export default function CreateEventPage() {
                             alt={`Upload ${i + 1}`}
                             className="h-full w-full object-cover"
                           />
-
                           {coverIndex === i && (
                             <span className="body-font absolute left-2 top-2 flex items-center gap-1 rounded-full bg-[#30bcc3] px-[10px] py-[5px] text-[10px] font-semibold text-white">
                               ★ Cover
                             </span>
                           )}
-
                           <span
                             onClick={(e) => {
                               e.stopPropagation();
@@ -328,6 +503,7 @@ export default function CreateEventPage() {
                       ))}
                 </div>
 
+                {/* COVER INFO */}
                 <p className="body-font mt-4 text-[22px] font-medium text-[#121212]">
                   Cover Page
                 </p>
@@ -335,6 +511,7 @@ export default function CreateEventPage() {
                   Tap a photo above to set it as the event cover.
                 </p>
 
+                {/* ADD MORE */}
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
@@ -345,9 +522,16 @@ export default function CreateEventPage() {
               </div>
             </form>
 
+            {/* MESSAGE */}
             {message && (
-              <p className="body-font mt-6 text-[15px] text-[#737378]">{message}</p>
+              <p className="body-font mt-6 text-[15px] text-[#737378]">
+                {message}
+              </p>
             )}
+
+            {/* ==========================================
+                ACTION BUTTONS
+            ========================================== */}
 
             <div className="mt-10 flex items-center gap-4">
               <Link
@@ -357,13 +541,15 @@ export default function CreateEventPage() {
                 Cancel
               </Link>
               <button
-                type="submit"
-                onClick={(e) => {
-                  e.preventDefault();
-                  (document.querySelector("form") as HTMLFormElement)?.requestSubmit();
+                type="button"
+                onClick={() => {
+                  const form = document.querySelector(
+                    "form"
+                  ) as HTMLFormElement | null;
+                  form?.requestSubmit();
                 }}
                 disabled={loading}
-                className="body-font flex h-[58px] items-center justify-center rounded-full bg-black px-9 text-[18px] font-medium text-[#ffffff] transition-all duration-300 hover:-translate-y-1 hover:shadow-lg active:scale-[0.98] disabled:opacity-60"
+                className="body-font flex h-[58px] items-center justify-center rounded-full bg-black px-9 text-[18px] font-medium text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-lg active:scale-[0.98] disabled:opacity-60"
               >
                 {loading ? "Publishing..." : "Publish Event"}
               </button>

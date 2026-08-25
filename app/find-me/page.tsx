@@ -5,12 +5,15 @@ import { supabase } from "@/lib/supabase";
 import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
 import { Upload, Search, Loader2, CheckCircle2 } from "lucide-react";
+import { getFaceEmbeddingFromServer } from "@/lib/api/extractFace"; // 🐍 Python Microservice Import
 
 type EventRow = Record<string, any>;
 
 type MatchResult = {
-  url: string;
-  confidence: number;
+  id: string;
+  event_id: string;
+  image_url: string;
+  similarity: number;
 };
 
 export default function FaceSearchStartPage() {
@@ -25,14 +28,13 @@ export default function FaceSearchStartPage() {
   const [isDragging, setIsDragging] = useState(false);
   const [searching, setSearching] = useState(false);
   const [matches, setMatches] = useState<MatchResult[] | null>(null);
+  const [statusMessage, setStatusMessage] = useState("");
 
-  // 1. Updated event fetching logic
   useEffect(() => {
     const fetchEvents = async () => {
       try {
         setEventsLoading(true);
 
-        // Select all columns to avoid schema mismatch crashes
         const { data, error } = await supabase.from("events").select("*");
 
         if (error) {
@@ -43,7 +45,6 @@ export default function FaceSearchStartPage() {
 
         if (data && data.length > 0) {
           setEvents(data);
-          // Flexibly resolve ID field if named differently (e.g., id vs event_id)
           const firstId = data[0].id || data[0].event_id;
           if (firstId) setSelectedEventId(String(firstId));
         } else {
@@ -64,6 +65,7 @@ export default function FaceSearchStartPage() {
       setSelfie(file);
       setSelfiePreview(URL.createObjectURL(file));
       setMatches(null);
+      setStatusMessage("");
     }
   };
 
@@ -73,59 +75,90 @@ export default function FaceSearchStartPage() {
     handleFile(e.dataTransfer.files?.[0]);
   };
 
-  // 2. Perform Search with safe storage fallback
+  // 🐍 Real Python AI + Vector Database Search Execution
   const handleStartSearch = async () => {
-    if (!selectedEventId || !selfie) return;
+    if (!selectedEventId || !selfie) {
+      setStatusMessage("Please select an event and upload a selfie.");
+      return;
+    }
 
     setSearching(true);
     setMatches(null);
+    setStatusMessage("Extracting face vector via Python AI engine...");
 
     try {
-      const fileExt = selfie.name.split(".").pop();
-      const fileName = `search_${Date.now()}.${fileExt}`;
-      const filePath = `search-queries/${fileName}`;
+      // ==========================================
+      // STEP 1: Extract 512-D ArcFace embedding
+      // ==========================================
+      const queryVector = await getFaceEmbeddingFromServer(selfie);
 
-      await supabase.storage
-        .from("event-images")
-        .upload(filePath, selfie, { upsert: true });
-
-      try {
-        await supabase.from("searches").insert([
-          {
-            event_id: selectedEventId,
-            query_type: "face_search",
-            created_at: new Date().toISOString(),
-          },
-        ]);
-      } catch {
-        console.warn("Searches metric log bypassed");
+      if (!queryVector || queryVector.length !== 512) {
+        setStatusMessage(
+          "No valid face detected. Please upload a clearer selfie."
+        );
+        return;
       }
 
-      const { data: files } = await supabase.storage
-        .from("event-images")
-        .list(selectedEventId, { limit: 20 });
+      console.log("✅ Query face vector received");
+      console.log("Vector dimensions:", queryVector.length);
 
-      let eventPhotos: MatchResult[] = [];
+      setStatusMessage("Searching your photos...");
 
-      if (files && files.length > 0) {
-        eventPhotos = files
-          .filter((f) => f.name !== ".emptyFolderPlaceholder")
-          .slice(0, 8)
-          .map((f, idx) => {
-            const { data: publicUrlData } = supabase.storage
-              .from("event-images")
-              .getPublicUrl(`${selectedEventId}/${f.name}`);
+      // ==========================================
+      // STEP 2: Search ONLY selected event
+      // ==========================================
+      console.log("🔎 Searching event:", selectedEventId);
 
-            return {
-              url: publicUrlData.publicUrl,
-              confidence: Math.max(98 - idx * 2, 82),
-            };
-          });
+      const { data, error } = await supabase.rpc("match_faces", {
+        query_embedding: queryVector,
+        match_threshold: 0.35,
+        match_count: 20,
+        filter_event_id: selectedEventId,
+      });
+
+      if (error) {
+        console.error("❌ Search RPC Error:", error);
+
+        setStatusMessage(
+          `Database search failed: ${error.message}`
+        );
+
+        return;
       }
 
-      setMatches(eventPhotos);
-    } catch (err) {
-      console.error("Search execution error:", err);
+      console.log("✅ RPC search completed");
+      console.log("Raw matches:", data);
+
+      // ==========================================
+      // STEP 3: Store results
+      // ==========================================
+      const foundMatches: MatchResult[] = (data || []).map((match: any) => ({
+        id: match.id,
+        event_id: match.event_id,
+        image_url: match.image_url,
+        similarity: Number(match.similarity),
+      }));
+
+      console.log("🎯 Final matches:", foundMatches);
+
+      setMatches(foundMatches);
+
+      if (foundMatches.length > 0) {
+        setStatusMessage(
+          `Found ${foundMatches.length} matching photos!`
+        );
+      } else {
+        setStatusMessage(
+          "No matching photos found for you in this event."
+        );
+      }
+    } catch (err: any) {
+      console.error("❌ Search execution error:", err);
+
+      setStatusMessage(
+        err?.message ||
+          "Unable to process your selfie. Please try another photo."
+      );
     } finally {
       setSearching(false);
     }
@@ -142,7 +175,7 @@ export default function FaceSearchStartPage() {
               Find Your Photos
             </h1>
             <p className="body-font text-[#666] mt-2 text-[18px]">
-              Select an event and upload a selfie to locate your pictures using AI face recognition.
+              Select an event and upload a selfie to locate your pictures using Python AI face recognition.
             </p>
           </div>
 
@@ -266,25 +299,33 @@ export default function FaceSearchStartPage() {
                 </div>
               </div>
 
-              <button
-                disabled={!selectedEventId || !selfie || searching}
-                onClick={handleStartSearch}
-                className={`mt-8 w-full h-[56px] rounded-full flex items-center justify-center gap-2 text-[16px] font-medium text-white transition-all ${
-                  !selectedEventId || !selfie || searching
-                    ? "bg-[#ccc] cursor-not-allowed"
-                    : "bg-black hover:bg-[#222] active:scale-[0.99]"
-                }`}
-              >
-                {searching ? (
-                  <>
-                    <Loader2 className="animate-spin h-5 w-5" /> Searching faces...
-                  </>
-                ) : (
-                  <>
-                    <Search className="h-5 w-5" /> Search My Photos
-                  </>
+              <div>
+                <button
+                  disabled={!selectedEventId || !selfie || searching}
+                  onClick={handleStartSearch}
+                  className={`mt-8 w-full h-[56px] rounded-full flex items-center justify-center gap-2 text-[16px] font-medium text-white transition-all ${
+                    !selectedEventId || !selfie || searching
+                      ? "bg-[#ccc] cursor-not-allowed"
+                      : "bg-black hover:bg-[#222] active:scale-[0.99]"
+                  }`}
+                >
+                  {searching ? (
+                    <>
+                      <Loader2 className="animate-spin h-5 w-5" /> Processing AI Search...
+                    </>
+                  ) : (
+                    <>
+                      <Search className="h-5 w-5" /> Search My Photos
+                    </>
+                  )}
+                </button>
+
+                {statusMessage && (
+                  <p className="text-center text-xs text-[#666] mt-3 font-medium">
+                    {statusMessage}
+                  </p>
                 )}
-              </button>
+              </div>
             </div>
           </div>
 
@@ -300,22 +341,22 @@ export default function FaceSearchStartPage() {
 
               {matches.length === 0 ? (
                 <p className="text-[#777] text-center py-8">
-                  No images found in this event bucket. Upload photos for this event ID to display matches.
+                  No matching faces found in this event. Ensure event photos were uploaded with clear faces.
                 </p>
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
                   {matches.map((match, idx) => (
                     <div
-                      key={idx}
+                      key={match.id || idx}
                       className="group relative h-52 rounded-[18px] overflow-hidden bg-[#eee] border border-[#e5e5e5]"
                     >
                       <img
-                        src={match.url}
+                        src={match.image_url}
                         alt={`Match ${idx + 1}`}
                         className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
                       />
                       <div className="absolute bottom-2 right-2 rounded-full bg-black/70 px-2.5 py-1 text-[12px] font-semibold text-white backdrop-blur-md">
-                        {match.confidence}% match
+                        {(match.similarity * 100).toFixed(1)}% similarity
                       </div>
                     </div>
                   ))}
