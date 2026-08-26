@@ -236,14 +236,14 @@ export default function FaceSearchStartPage() {
       console.log("------------------------------------");
 
       console.log("Event filter:", selectedEventId);
-      console.log("Threshold:", 0.35);
+      console.log("Threshold:", 0.27);
       console.log("Match count:", 30);
 
       const { data, error } = await supabase.rpc("match_faces", {
         query_embedding: queryVector,
 
         // SAME THRESHOLD AS EVENT PAGE
-        match_threshold: 0.35,
+        match_threshold: 0.27,
 
         // SAME RESULT LIMIT AS EVENT PAGE
         match_count: 30,
