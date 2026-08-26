@@ -1,337 +1,1064 @@
 "use client";
 
-import { useState, useEffect, useRef, use } from "react";
-import Link from "next/link";
+import { useState, useEffect, useRef } from "react";
+import { useParams } from "next/navigation";
 import Image from "next/image";
-import { Download } from "lucide-react";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
+import {
+  ArrowLeft,
+  Loader2,
+  Sparkles,
+  Upload,
+} from "lucide-react";
+import { getFaceEmbeddingFromServer } from "@/lib/api/extractFace";
 
-const categoryColors: Record<string, string> = {
-  Seminar: "#30bcc3",
-  Workshop: "#1a8287",
-  Cultural: "#1a8287",
-  Fest: "#123c3e",
+type MatchResult = {
+  id: string;
+  event_id: string;
+  image_url: string;
+  similarity: number;
 };
 
-type EventRow = {
+type EventData = {
   id: string;
   title: string;
   category?: string;
   event_date?: string;
   location?: string;
-  description?: string;
   cover_image_url?: string;
   cover_image?: string;
 };
 
-export default function EventDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
+export default function SingleEventPage() {
+  const params = useParams();
+
+  /*
+   * ============================================================
+   * EVENT ID
+   * ============================================================
+   */
+
+  const rawEventId = params?.id;
+
+  const eventId =
+    typeof rawEventId === "string"
+      ? rawEventId.trim()
+      : Array.isArray(rawEventId)
+      ? rawEventId[0]?.trim()
+      : "";
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [event, setEvent] = useState<EventRow | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [photos, setPhotos] = useState<string[]>([]);
-  const [photosLoading, setPhotosLoading] = useState(true);
+  /*
+   * ============================================================
+   * EVENT STATE
+   * ============================================================
+   */
+
+  const [event, setEvent] = useState<EventData | null>(null);
+  const [allPhotos, setAllPhotos] = useState<any[]>([]);
+  const [loadingEvent, setLoadingEvent] = useState(true);
+
+  /*
+   * ============================================================
+   * FACE SEARCH STATE
+   * ============================================================
+   */
+
   const [selfie, setSelfie] = useState<File | null>(null);
+  const [selfiePreview, setSelfiePreview] = useState<string | null>(
+    null
+  );
+
   const [isDragging, setIsDragging] = useState(false);
   const [searching, setSearching] = useState(false);
-  const [matches, setMatches] = useState<{ url: string; confidence: number }[] | null>(null);
+
+  const [matches, setMatches] = useState<MatchResult[] | null>(
+    null
+  );
+
+  const [statusMessage, setStatusMessage] = useState("");
+
+  /*
+   * ============================================================
+   * FACE SEARCH CONFIGURATION
+   * ============================================================
+   *
+   * Keep these values the same as Find-Me.
+   */
+
+  const MATCH_THRESHOLD = 0.35;
+  const MATCH_COUNT = 100;
+
+  /*
+   * ============================================================
+   * FETCH EVENT + PHOTOS
+   * ============================================================
+   */
 
   useEffect(() => {
-    const fetchEvent = async () => {
-      const { data, error } = await supabase.from("events").select("*").eq("id", id).single();
-      if (error) console.error("Fetch event error:", error);
-      setEvent(data);
-      setLoading(false);
+    if (!eventId) {
+      console.error("❌ No event ID found in URL");
+      setLoadingEvent(false);
+      return;
+    }
+
+    const fetchData = async () => {
+      try {
+        setLoadingEvent(true);
+
+        console.log("========================================");
+        console.log("📌 EVENT PAGE");
+        console.log("Event ID:", eventId);
+        console.log("========================================");
+
+        /*
+         * --------------------------------------------------------
+         * 1. FETCH EVENT
+         * --------------------------------------------------------
+         */
+
+        const {
+          data: eventData,
+          error: eventError,
+        } = await supabase
+          .from("events")
+          .select("*")
+          .eq("id", eventId)
+          .single();
+
+        if (eventError) {
+          console.error(
+            "❌ Event fetch error:",
+            eventError.message,
+            eventError.details
+          );
+
+          setEvent(null);
+        } else if (eventData) {
+          console.log("✅ Event loaded:", eventData);
+
+          setEvent(eventData);
+        }
+
+        /*
+         * --------------------------------------------------------
+         * 2. FETCH EVENT PHOTOS
+         * --------------------------------------------------------
+         *
+         * IMPORTANT:
+         *
+         * Your photos table does NOT contain created_at.
+         *
+         * Therefore DO NOT use:
+         *
+         * .order("created_at")
+         *
+         * We simply fetch the photos belonging to this event.
+         */
+
+        const {
+          data: photoData,
+          error: photoError,
+        } = await supabase
+          .from("photos")
+          .select("*")
+          .eq("event_id", eventId);
+
+        if (photoError) {
+          console.error(
+            "❌ Photos fetch error:",
+            photoError.message,
+            photoError.details
+          );
+
+          setAllPhotos([]);
+        } else {
+          console.log(
+            `✅ Loaded ${photoData?.length || 0} event photos`
+          );
+
+          setAllPhotos(photoData || []);
+        }
+      } catch (error) {
+        console.error(
+          "❌ Event page fetch error:",
+          error
+        );
+      } finally {
+        setLoadingEvent(false);
+      }
     };
-    fetchEvent();
-  }, [id]);
 
-  useEffect(() => {
-    const fetchPhotos = async () => {
-      setPhotosLoading(true);
+    fetchData();
+  }, [eventId]);
 
-      const { data, error } = await supabase.storage
-        .from("event-images")
-        .list(id, { sortBy: { column: "name", order: "asc" } });
+  /*
+   * ============================================================
+   * FILE HANDLING
+   * ============================================================
+   */
 
-      if (error) {
-        console.error("Fetch photos error:", error);
-        setPhotosLoading(false);
+  const handleFile = (file: File | undefined) => {
+    if (!file) return;
+
+    /*
+     * Validate image
+     */
+
+    if (!file.type.startsWith("image/")) {
+      setStatusMessage(
+        "Please upload a valid image file."
+      );
+      return;
+    }
+
+    /*
+     * Revoke previous preview URL
+     * to prevent memory leaks.
+     */
+
+    if (selfiePreview) {
+      URL.revokeObjectURL(selfiePreview);
+    }
+
+    const previewUrl = URL.createObjectURL(file);
+
+    setSelfie(file);
+    setSelfiePreview(previewUrl);
+
+    /*
+     * Clear previous results
+     */
+
+    setMatches(null);
+    setStatusMessage("");
+  };
+
+  /*
+   * ============================================================
+   * DRAG & DROP
+   * ============================================================
+   */
+
+  const handleDrop = (
+    e: React.DragEvent<HTMLDivElement>
+  ) => {
+    e.preventDefault();
+
+    setIsDragging(false);
+
+    const file = e.dataTransfer.files?.[0];
+
+    handleFile(file);
+  };
+
+  /*
+   * ============================================================
+   * FACE SEARCH
+   * ============================================================
+   */
+
+  const handleStartSearch = async () => {
+    if (!eventId) {
+      setStatusMessage(
+        "Invalid event. Please open the event again."
+      );
+      return;
+    }
+
+    if (!selfie) {
+      setStatusMessage(
+        "Please upload a selfie to search."
+      );
+      return;
+    }
+
+    if (searching) {
+      return;
+    }
+
+    /*
+     * Start searching
+     */
+
+    setSearching(true);
+    setMatches(null);
+
+    setStatusMessage(
+      "Extracting face vector via Python AI engine..."
+    );
+
+    try {
+      console.log("");
+      console.log("========================================");
+      console.log("🔎 STARTING EVENT FACE SEARCH");
+      console.log("========================================");
+
+      console.log("📌 Event ID:", eventId);
+      console.log(
+        "📌 Match threshold:",
+        MATCH_THRESHOLD
+      );
+      console.log(
+        "📌 Match count:",
+        MATCH_COUNT
+      );
+      console.log("📌 Selfie:", selfie.name);
+
+      /*
+       * ========================================================
+       * STEP 1
+       * Extract 512-dimensional ArcFace embedding
+       * ========================================================
+       */
+
+      console.log(
+        "🧠 STEP 1: Extracting face embedding..."
+      );
+
+      const queryVector =
+        await getFaceEmbeddingFromServer(selfie);
+
+      /*
+       * Check face detection
+       */
+
+      if (!queryVector) {
+        setStatusMessage(
+          "No face detected. Please upload a clearer selfie."
+        );
         return;
       }
 
-      const files = (data || []).filter((f) => f.name && !f.name.startsWith("."));
+      /*
+       * Check embedding dimensions
+       */
 
-      const urls = files.map((file) => {
-        const { data: publicUrlData } = supabase.storage
-          .from("event-images")
-          .getPublicUrl(`${id}/${file.name}`);
-        return publicUrlData.publicUrl;
-      });
+      if (queryVector.length !== 512) {
+        console.error(
+          "❌ Invalid embedding dimensions:",
+          queryVector.length
+        );
 
-      setPhotos(urls);
-      setPhotosLoading(false);
-    };
+        setStatusMessage(
+          "Invalid face vector. Please upload another selfie."
+        );
 
-    fetchPhotos();
-  }, [id]);
+        return;
+      }
 
-  const handleFile = (file: File | undefined) => {
-    if (file && file.type.startsWith("image/")) setSelfie(file);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    handleFile(e.dataTransfer.files?.[0]);
-  };
-
-  const handleSearch = () => {
-    if (!selfie) {
-      fileInputRef.current?.click();
-      return;
-    }
-    setSearching(true);
-    setTimeout(() => {
-      const sample = photos.slice(0, 4);
-      setMatches(
-        sample.map((url, i) => ({
-          url,
-          confidence: [98, 96, 95, 93][i] ?? 90,
-        }))
+      console.log(
+        "✅ Face embedding extracted"
       );
+
+      console.log(
+        "📐 Vector dimensions:",
+        queryVector.length
+      );
+
+      /*
+       * ========================================================
+       * STEP 2
+       * Search pgvector using match_faces RPC
+       * ========================================================
+       */
+
+      setStatusMessage(
+        "Searching this event's photos..."
+      );
+
+      console.log("");
+      console.log(
+        "🔎 STEP 2: Vector search"
+      );
+      console.log("----------------------------------------");
+      console.log(
+        "RPC: match_faces"
+      );
+      console.log(
+        "Event ID:",
+        eventId
+      );
+      console.log(
+        "Threshold:",
+        MATCH_THRESHOLD
+      );
+      console.log(
+        "Count:",
+        MATCH_COUNT
+      );
+      console.log("----------------------------------------");
+
+      const {
+        data,
+        error,
+      } = await supabase.rpc(
+        "match_faces",
+        {
+          query_embedding: queryVector,
+
+          match_threshold:
+            MATCH_THRESHOLD,
+
+          match_count:
+            MATCH_COUNT,
+
+          /*
+           * Search ONLY the current event.
+           */
+          filter_event_id:
+            eventId,
+        }
+      );
+
+      /*
+       * ========================================================
+       * RPC ERROR
+       * ========================================================
+       */
+
+      if (error) {
+        console.error("");
+        console.error(
+          "❌ RPC SEARCH ERROR"
+        );
+        console.error(
+          "Message:",
+          error.message
+        );
+        console.error(
+          "Details:",
+          error.details
+        );
+        console.error(
+          "Hint:",
+          error.hint
+        );
+        console.error(
+          "Code:",
+          error.code
+        );
+
+        setStatusMessage(
+          `Database search failed: ${error.message}`
+        );
+
+        return;
+      }
+
+      /*
+       * ========================================================
+       * STEP 3
+       * PROCESS RESULTS
+       * ========================================================
+       */
+
+      console.log("");
+      console.log(
+        "✅ RPC SEARCH COMPLETED"
+      );
+
+      console.log(
+        "Raw results:",
+        data
+      );
+
+      console.log(
+        `📊 Raw match count: ${
+          data?.length || 0
+        }`
+      );
+
+      /*
+       * Convert database results
+       */
+
+      const foundMatches: MatchResult[] =
+        (data || [])
+          .map((match: any) => ({
+            id: String(match.id),
+            event_id: String(
+              match.event_id
+            ),
+            image_url:
+              match.image_url,
+            similarity:
+              Number(
+                match.similarity
+              ),
+          }))
+          .filter(
+            (match: MatchResult) =>
+              Boolean(match.id) &&
+              Boolean(match.image_url) &&
+              Number.isFinite(
+                match.similarity
+              )
+          );
+
+      /*
+       * Sort from highest similarity
+       * to lowest similarity.
+       */
+
+      foundMatches.sort(
+        (a, b) =>
+          b.similarity -
+          a.similarity
+      );
+
+      /*
+       * Debug
+       */
+
+      console.log("");
+      console.log(
+        "========================================"
+      );
+      console.log(
+        "🎯 FINAL EVENT MATCHES"
+      );
+      console.log(
+        "========================================"
+      );
+
+      console.log(
+        `Total valid matches: ${foundMatches.length}`
+      );
+
+      foundMatches.forEach(
+        (match, index) => {
+          console.log(
+            `${index + 1}. ${(
+              match.similarity * 100
+            ).toFixed(
+              2
+            )}% | ${match.image_url}`
+          );
+        }
+      );
+
+      console.log(
+        "========================================"
+      );
+
+      /*
+       * Save results
+       */
+
+      setMatches(foundMatches);
+
+      /*
+       * Status
+       */
+
+      if (
+        foundMatches.length > 0
+      ) {
+        setStatusMessage(
+          `Found ${foundMatches.length} matching photos!`
+        );
+      } else {
+        setStatusMessage(
+          "No matching photos found for you in this event."
+        );
+      }
+    } catch (error: any) {
+      console.error("");
+      console.error(
+        "❌ FACE SEARCH FAILED"
+      );
+      console.error(error);
+
+      setStatusMessage(
+        error?.message ||
+          "Unable to process your selfie. Please try another photo."
+      );
+    } finally {
       setSearching(false);
-    }, 1200);
+    }
   };
 
-  if (loading) {
+  /*
+   * ============================================================
+   * RESET SEARCH
+   * ============================================================
+   */
+
+  const resetSearch = () => {
+    if (selfiePreview) {
+      URL.revokeObjectURL(
+        selfiePreview
+      );
+    }
+
+    setMatches(null);
+    setSelfie(null);
+    setSelfiePreview(null);
+    setStatusMessage("");
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  /*
+   * ============================================================
+   * LOADING STATE
+   * ============================================================
+   */
+
+  if (loadingEvent) {
     return (
       <>
         <Navbar />
-        <main className="flex min-h-screen items-center justify-center pt-20">
-          <p className="body-font text-[18px] text-[#737378]">Loading event...</p>
+
+        <main className="min-h-screen bg-[#f8f9fa] pt-40 text-center">
+          <Loader2 className="w-7 h-7 animate-spin mx-auto mb-4 text-[#737378]" />
+
+          <p className="text-lg text-[#737378]">
+            Loading event details...
+          </p>
         </main>
+
         <Footer />
       </>
     );
   }
+
+  /*
+   * ============================================================
+   * EVENT NOT FOUND
+   * ============================================================
+   */
 
   if (!event) {
     return (
       <>
         <Navbar />
-        <main className="flex min-h-screen flex-col items-center justify-center gap-4 pt-20">
-          <p className="body-font text-[20px] text-[#737378]">Event not found.</p>
-          <Link href="/events" className="body-font text-[16px] font-medium text-black underline">
-            Back to All Events
+
+        <main className="min-h-screen bg-[#f8f9fa] pt-40 text-center">
+          <p className="text-lg text-red-500">
+            Event not found.
+          </p>
+
+          <Link
+            href="/events"
+            className="inline-block mt-4 underline text-[#111]"
+          >
+            Back to Events
           </Link>
         </main>
+
         <Footer />
       </>
     );
   }
 
-  const catColor = categoryColors[event.category || ""] || "#30bcc3";
-  const cover = event.cover_image_url?.trim() || event.cover_image?.trim() || photos[0] || "/gallery/gallery1.webp";
-  const visiblePhotos = photos.slice(0, 7);
-  const remainingCount = photos.length - visiblePhotos.length;
+  /*
+   * ============================================================
+   * UI
+   * ============================================================
+   */
 
   return (
     <>
       <Navbar />
 
-      <main className="pt-20">
-        <div className="px-4 pb-20">
-          <div className="mx-auto mt-8 w-full max-w-[1174px]">
+      <main className="min-h-screen pt-24 pb-20 px-6 bg-[#f8f9fa]">
+        <div className="mx-auto max-w-[1000px]">
 
-            <Link href="/events" className="body-font text-[16px] font-medium text-[#66666b] transition hover:text-black">
-              ← All Events
-            </Link>
+          {/* ================================================== */}
+          {/* BACK TO EVENTS */}
+          {/* ================================================== */}
 
-            <div className="mt-8 flex items-center">
-              <span
-                className="body-font rounded-full px-4 py-2 text-[14px] font-medium text-white"
-                style={{ backgroundColor: catColor }}
-              >
-                {event.category || "Event"}
+          <Link
+            href="/events"
+            className="flex items-center gap-2 text-[#737378] hover:text-black transition w-fit mb-6"
+          >
+            <ArrowLeft className="w-4 h-4" />
+
+            <span className="font-medium text-[14px]">
+              All Events
+            </span>
+          </Link>
+
+          {/* ================================================== */}
+          {/* CATEGORY */}
+          {/* ================================================== */}
+
+          <span className="bg-[#123c3e] text-[#30bcc3] px-3 py-1 rounded-full text-[12px] font-semibold mb-4 inline-block">
+            {event.category || "Event"}
+          </span>
+
+          {/* ================================================== */}
+          {/* TITLE */}
+          {/* ================================================== */}
+
+          <h1 className="text-4xl md:text-[44px] font-semibold text-[#111] mb-2">
+            {event.title}
+          </h1>
+
+          {/* ================================================== */}
+          {/* EVENT META */}
+          {/* ================================================== */}
+
+          <p className="text-[#737378] text-[15px] mb-8">
+            {event.event_date
+              ? new Date(
+                  event.event_date
+                ).toLocaleDateString(
+                  "en-US",
+                  {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  }
+                )
+              : "Date unavailable"}
+
+            {" • "}
+
+            {event.location ||
+              "Location unavailable"}
+
+            {" • "}
+
+            {allPhotos.length} photos
+          </p>
+
+          {/* ================================================== */}
+          {/* HERO IMAGE */}
+          {/* ================================================== */}
+
+          <div className="relative h-[250px] md:h-[350px] w-full rounded-[24px] overflow-hidden mb-12 shadow-md">
+            <Image
+              src={
+                event.cover_image_url?.trim() ||
+                event.cover_image?.trim() ||
+                "/gallery/gallery1.webp"
+              }
+              alt={
+                event.title ||
+                "Event"
+              }
+              fill
+              priority
+              sizes="100vw"
+              className="object-cover"
+            />
+          </div>
+
+          {/* ================================================== */}
+          {/* FACIAL SEARCH CARD */}
+          {/* ================================================== */}
+
+          <div className="bg-white rounded-[32px] p-8 md:p-10 mb-16 border border-[#e5e5e5] shadow-sm">
+
+            {/* SEARCH HEADER */}
+
+            <div className="max-w-xl mx-auto text-center mb-8">
+
+              <span className="inline-flex items-center gap-1.5 bg-[#f0f0f0] text-[#111] px-3.5 py-1.5 rounded-full text-[12px] font-semibold mb-4">
+                <Sparkles className="w-3.5 h-3.5 text-[#30bcc3]" />
+
+                AI Face Search
               </span>
+
+              <h2 className="text-[30px] font-semibold text-[#111] mb-2">
+                Find Your Photos
+              </h2>
+
+              <p className="text-[#666] text-[15px]">
+                Upload a selfie and our
+                Python AI engine will scan
+                this event to find every photo
+                you appear in.
+              </p>
             </div>
 
-            <h1 className="heading-font mt-4 text-[clamp(36px,5.5vw,56px)] font-semibold text-[#111111]">
-              {event.title}
-            </h1>
+            {/* ================================================== */}
+            {/* UPLOAD AREA */}
+            {/* ================================================== */}
 
-            <p className="body-font mt-4 text-[18px] text-[#737378]">
-              {event.event_date ? new Date(event.event_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "No date"}
-              {event.location && <> &nbsp;•&nbsp; {event.location}</>}
-              {photos.length > 0 && <> &nbsp;•&nbsp; {photos.length} photos</>}
-            </p>
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                setIsDragging(true);
+              }}
+              onDragLeave={() => {
+                setIsDragging(false);
+              }}
+              onDrop={handleDrop}
+              onClick={() =>
+                fileInputRef.current?.click()
+              }
+              className={`border-2 border-dashed rounded-[24px] p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center min-h-[200px] max-w-xl mx-auto mb-6 ${
+                isDragging
+                  ? "border-black bg-[#f5f5f5]"
+                  : "border-[#cccccc] hover:border-black bg-[#fafafa]"
+              }`}
+            >
 
-            <div className="relative mt-8 h-[420px] w-full overflow-hidden rounded-[32px] bg-[#eaeaea]">
-              <Image src={cover} alt={event.title} fill className="object-cover" />
-            </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={(e) => {
+                  handleFile(
+                    e.target.files?.[0]
+                  );
 
-            {/* Face Search Card */}
-            <div className="mt-10 rounded-[44px] bg-[#111111] p-10 md:p-14">
-              <div className="flex flex-col gap-10 md:flex-row md:items-center md:justify-between">
-                <div className="max-w-[520px]">
-                  <span className="body-font inline-flex items-center gap-2 rounded-full bg-[rgba(48,188,195,0.2)] px-4 py-2 text-[14px] text-[#30bcc3]">
-                    <span className="h-2 w-2 rounded-full bg-[#30bcc3]" />
-                    AI Face Search
+                  /*
+                   * Allow same image
+                   * to be selected again.
+                   */
+                  e.target.value = "";
+                }}
+              />
+
+              {selfiePreview ? (
+                <div className="flex flex-col items-center gap-3">
+
+                  <div className="h-28 w-28 rounded-full overflow-hidden border-2 border-black shadow-md">
+                    <img
+                      src={selfiePreview}
+                      alt="Selfie Preview"
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+
+                  <span className="text-sm text-[#444] font-medium">
+                    {selfie?.name}
                   </span>
-                  <h2 className="heading-font mt-4 text-[36px] font-semibold text-white">
-                    Find Your Photos
-                  </h2>
-                  <p className="body-font mt-4 text-[17px] text-[#bfbfc2]">
-                    Upload a selfie and we&apos;ll scan every photo uploaded from this event to find every shot you&apos;re in — instantly.
-                  </p>
-                  <button
-                    onClick={handleSearch}
-                    disabled={searching || photos.length === 0}
-                    className="body-font mt-8 flex h-[60px] items-center justify-center rounded-full bg-[#30bcc3] px-8 text-[18px] font-semibold text-[#111111] transition-all duration-300 hover:-translate-y-1 hover:shadow-lg active:scale-[0.98] disabled:opacity-60"
-                  >
-                    {searching ? "Searching..." : "Upload Selfie & Search"}
-                  </button>
-                </div>
 
-                <div
-                  onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-                  onDragLeave={() => setIsDragging(false)}
-                  onDrop={handleDrop}
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`
-                    flex h-[260px] w-full cursor-pointer flex-col items-center justify-center gap-3
-                    rounded-[28px] border-[1.5px] border-dashed bg-white/[0.06] transition-colors md:w-[420px]
-                    ${isDragging ? "border-white/60 bg-white/10" : "border-white/25"}
-                  `}
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => handleFile(e.target.files?.[0])}
-                  />
-                  {selfie ? (
-                    <>
-                      <div className="relative h-[64px] w-[64px] overflow-hidden rounded-full">
-                        <Image src={URL.createObjectURL(selfie)} alt="Selfie preview" fill className="object-cover" />
-                      </div>
-                      <p className="body-font text-[14px] text-[#d9d9db]">{selfie.name}</p>
-                    </>
-                  ) : (
-                    <>
-                      <div className="h-[64px] w-[64px] rounded-full bg-[#30bcc3]" />
-                      <p className="body-font text-[16px] text-[#d9d9db]">Drag & drop your selfie here</p>
-                      <p className="body-font text-[14px] text-[#99999e]">or click to browse</p>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
+                  <span className="text-xs text-[#30bcc3] underline">
+                    Click to change photo
+                  </span>
 
-            {/* All Uploaded Photos */}
-            <h2 className="heading-font mt-16 text-[34px] font-semibold text-[#111111]">
-              All Uploaded Photos
-            </h2>
-            <p className="body-font mt-2 text-[22px] text-[#808080]">
-              {photosLoading ? "Loading photos..." : `${photos.length} photos uploaded for this event`}
-            </p>
-
-            <div className="mt-6 rounded-[44px] bg-[#eaeaea] p-10">
-              {photosLoading ? (
-                <div className="grid grid-cols-2 gap-5 sm:grid-cols-4">
-                  {Array.from({ length: 8 }).map((_, i) => (
-                    <div key={i} className="aspect-[4/3] animate-pulse rounded-[20px] bg-[#d9d9d9]" />
-                  ))}
                 </div>
-              ) : photos.length === 0 ? (
-                <p className="body-font py-10 text-center text-[18px] text-[#8c8c8c]">
-                  No photos uploaded for this event yet.
-                </p>
               ) : (
-                <div className="grid grid-cols-2 gap-5 sm:grid-cols-4">
-                  {visiblePhotos.map((url, i) => (
-                    <div key={url} className="group relative aspect-[4/3] overflow-hidden rounded-[20px] bg-[#d9d9d9]">
-                      <Image src={url} alt={`Event photo ${i + 1}`} fill className="object-cover" />
-                      <a
-                        href={url}
-                        download
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-white opacity-0 backdrop-blur-sm transition-opacity duration-200 group-hover:opacity-100"
-                      >
-                        <Download className="h-[18px] w-[18px]" />
-                      </a>
-                    </div>
-                  ))}
-                  {remainingCount > 0 && (
-                    <Link
-                      href={`/events/${id}/gallery`}
-                      className="relative flex aspect-[4/3] items-center justify-center overflow-hidden rounded-[20px] bg-[rgba(26,130,135,0.55)] transition hover:bg-[rgba(26,130,135,0.7)]"
-                    >
-                      <span className="body-font text-[20px] font-semibold text-white">
-                        +{remainingCount} more
-                      </span>
-                    </Link>
-                  )}
+                <div className="flex flex-col items-center gap-3">
+
+                  <div className="h-12 w-12 rounded-full bg-[#ebebeb] flex items-center justify-center">
+                    <Upload className="h-6 w-6 text-[#555]" />
+                  </div>
+
+                  <p className="text-[15px] font-medium text-[#333]">
+                    Click or drag & drop your
+                    selfie here
+                  </p>
+
+                  <span className="text-xs text-[#888]">
+                    Supports JPG, PNG, WEBP
+                  </span>
+
                 </div>
               )}
             </div>
 
-            {/* Matches */}
-            {matches && (
-              <>
-                <div className="mt-16 flex items-center gap-4">
-                  <h2 className="heading-font text-[34px] font-semibold text-[#111111]">
-                    Your Matches
-                  </h2>
-                  <span className="body-font rounded-full bg-[#30bcc3] px-4 py-1 text-[15px] font-semibold text-white">
-                    {matches.length} photos found
-                  </span>
-                </div>
-                <p className="body-font mt-2 text-[24px] text-[#808080]">
-                  AI face search identified you in these photos from {event.title}.
+            {/* ================================================== */}
+            {/* SEARCH BUTTON */}
+            {/* ================================================== */}
+
+            <div className="max-w-xl mx-auto">
+
+              <button
+                disabled={!selfie || searching}
+                onClick={handleStartSearch}
+                className={`w-full h-[54px] rounded-full flex items-center justify-center gap-2 text-[16px] font-medium text-white transition-all ${
+                  !selfie || searching
+                    ? "bg-[#ccc] cursor-not-allowed"
+                    : "bg-black hover:bg-[#222] active:scale-[0.99]"
+                }`}
+              >
+                {searching ? (
+                  <>
+                    <Loader2 className="animate-spin h-5 w-5" />
+
+                    Processing AI Search...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-5 w-5" />
+
+                    Search My Photos
+                  </>
+                )}
+              </button>
+
+              {statusMessage && (
+                <p className="text-center text-xs text-[#666] mt-3 font-medium">
+                  {statusMessage}
+                </p>
+              )}
+
+            </div>
+          </div>
+
+          {/* ================================================== */}
+          {/* RESULTS / EVENT GALLERY */}
+          {/* ================================================== */}
+
+          <div>
+
+            {/* RESULT HEADER */}
+
+            <div className="mb-6 flex items-center justify-between">
+
+              <div>
+
+                <h3 className="text-[24px] font-semibold text-[#111]">
+                  {matches !== null
+                    ? `Found ${matches.length} Matches`
+                    : "All Event Photos"}
+                </h3>
+
+                <p className="text-[#737378] text-[15px] mt-1">
+                  {matches !== null
+                    ? "Showing AI-matched photos for this event."
+                    : `${allPhotos.length} total photos available for this event`}
                 </p>
 
-                <div className="mt-6 rounded-[44px] border-[1.5px] border-[rgba(48,188,195,0.4)] bg-[rgba(48,188,195,0.08)] p-10">
-                  <div className="grid grid-cols-2 gap-5 sm:grid-cols-4">
-                    {matches.map((m, i) => (
-                      <div key={i} className="group relative aspect-[4/3] overflow-hidden rounded-[20px] bg-[#d9d9d9]">
-                        <Image src={m.url} alt={`Match ${i + 1}`} fill className="object-cover" />
-                        <span className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-[#30bcc3] text-[16px] font-semibold text-white">
-                          ✓
-                        </span>
-                        <a
-                          href={m.url}
-                          download
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="absolute right-3 top-[52px] flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-white opacity-0 backdrop-blur-sm transition-opacity duration-200 group-hover:opacity-100"
-                        >
-                          <Download className="h-[18px] w-[18px]" />
-                        </a>
-                        <span className="body-font absolute bottom-3 left-3 rounded-full bg-black/50 px-4 py-1 text-[13px] font-medium text-white">
-                          {m.confidence}% match
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+              </div>
 
-                <div className="mt-10 flex justify-center">
-                  <button className="body-font flex h-[60px] items-center justify-center rounded-full bg-black px-8 text-[17px] font-medium text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-lg active:scale-[0.98]">
-                    Download All Matches
-                  </button>
-                </div>
-              </>
-            )}
+              {matches !== null && (
+                <button
+                  onClick={resetSearch}
+                  className="text-sm underline text-[#666] hover:text-black font-medium"
+                >
+                  Reset Search
+                </button>
+              )}
+
+            </div>
+
+            {/* ================================================== */}
+            {/* PHOTO GRID */}
+            {/* ================================================== */}
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 bg-white p-6 rounded-[32px] border border-[#e5e5e5] shadow-sm">
+
+              {/* ================================================= */}
+              {/* AI MATCH RESULTS */}
+              {/* ================================================= */}
+
+              {matches !== null ? (
+
+                matches.length > 0 ? (
+
+                  matches.map(
+                    (match, idx) => (
+
+                      <div
+                        key={
+                          match.id ||
+                          idx
+                        }
+                        className="relative aspect-square rounded-[18px] overflow-hidden group shadow-sm border border-[#e5e5e5]"
+                      >
+
+                        <img
+                          src={
+                            match.image_url
+                          }
+                          alt={`Match ${
+                            idx + 1
+                          }`}
+                          className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                        />
+
+                        <div className="absolute bottom-2 right-2 rounded-full bg-black/70 px-2.5 py-1 text-[11px] font-bold text-white backdrop-blur-md">
+                          {(
+                            match.similarity *
+                            100
+                          ).toFixed(
+                            1
+                          )}
+                          % match
+                        </div>
+
+                      </div>
+                    )
+                  )
+
+                ) : (
+
+                  <div className="col-span-full py-12 text-center text-[#737378]">
+
+                    <p className="font-medium">
+                      No matching faces
+                      found in this event.
+                    </p>
+
+                    <p className="text-sm mt-2">
+                      Try uploading a
+                      clearer selfie.
+                    </p>
+
+                  </div>
+
+                )
+
+              ) : (
+
+                /* ================================================= */
+                /* NORMAL EVENT GALLERY */
+                /* ================================================= */
+
+                allPhotos.length > 0 ? (
+
+                  allPhotos.map(
+                    (photo, index) => (
+
+                      <div
+                        key={
+                          photo.id ||
+                          index
+                        }
+                        className="relative aspect-square rounded-[18px] overflow-hidden border border-[#e5e5e5] bg-[#f0f0f0]"
+                      >
+
+                        {photo.image_url ? (
+                          <img
+                            src={
+                              photo.image_url
+                            }
+                            alt={`Event Photo ${
+                              index + 1
+                            }`}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="h-full w-full flex items-center justify-center text-sm text-[#888]">
+                            Image unavailable
+                          </div>
+                        )}
+
+                      </div>
+                    )
+                  )
+
+                ) : (
+
+                  <div className="col-span-full py-12 text-center text-[#737378]">
+                    No photos have been
+                    uploaded for this event
+                    yet.
+                  </div>
+
+                )
+
+              )}
+
+            </div>
           </div>
+
         </div>
       </main>
 
