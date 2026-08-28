@@ -1,11 +1,26 @@
-from fastapi import FastAPI, UploadFile, File 
+from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from deepface import DeepFace
+
 import tempfile
 import os
 import numpy as np
+import cv2
 
-app = FastAPI(title="evris Face Recognition API")
+
+# ============================================================
+# APP
+# ============================================================
+
+app = FastAPI(
+    title="EVRIS Face Recognition API",
+    version="2.0.0"
+)
+
+
+# ============================================================
+# CORS
+# ============================================================
 
 app.add_middleware(
     CORSMiddleware,
@@ -18,68 +33,405 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ============================================================
+# DEBUG DIRECTORY
+# ============================================================
+
+os.makedirs("debug_faces", exist_ok=True)
+
+
+# ============================================================
+# HOME
+# ============================================================
+
 @app.get("/")
 def home():
     return {
-        "status": "evris Face API Running",
-        "service": "Face Embedding Service"
+        "status": "EVRIS Face API Running",
+        "service": "Face Embedding Service",
+        "model": "Facenet512",
+        "detector": "RetinaFace",
+        "dimensions": 512
     }
+
+
+# ============================================================
+# FACE VECTOR EXTRACTION
+# ============================================================
 
 @app.post("/extract-vector")
 async def extract_vector(file: UploadFile = File(...)):
+
     temp_path = None
 
     try:
-        suffix = os.path.splitext(file.filename or ".jpg")[1]
+
+        # ----------------------------------------------------
+        # 1. Validate file
+        # ----------------------------------------------------
+
+        if not file.filename:
+            return {
+                "success": False,
+                "error": "No filename supplied."
+            }
+
+        suffix = os.path.splitext(file.filename)[1].lower()
+
+        if suffix not in [".jpg", ".jpeg", ".png", ".webp"]:
+            suffix = ".jpg"
+
+
+        # ----------------------------------------------------
+        # 2. Save uploaded image temporarily
+        # ----------------------------------------------------
 
         with tempfile.NamedTemporaryFile(
             delete=False,
             suffix=suffix
         ) as temp_file:
+
             contents = await file.read()
+
+            if not contents:
+                return {
+                    "success": False,
+                    "error": "Uploaded file is empty."
+                }
+
             temp_file.write(contents)
+
             temp_path = temp_file.name
 
-        # Generate FaceNet512 embeddings
+
+        # ----------------------------------------------------
+        # 3. Read image with OpenCV
+        # ----------------------------------------------------
+
+        img = cv2.imread(temp_path)
+
+        if img is None:
+            return {
+                "success": False,
+                "error": "Unable to read uploaded image."
+            }
+
+
+        height, width = img.shape[:2]
+
+
+        print("\n")
+        print("================================================")
+        print("EVRIS FACE EXTRACTION")
+        print("================================================")
+        print("FILE:", file.filename)
+        print("WIDTH:", width)
+        print("HEIGHT:", height)
+        print("MODEL: Facenet512")
+        print("DETECTOR: RetinaFace")
+        print("================================================")
+
+
+        # ----------------------------------------------------
+        # 4. Generate embeddings
+        # ----------------------------------------------------
+        #
+        # IMPORTANT:
+        #
+        # enforce_detection=False
+        #
+        # allows DeepFace to continue even when detection
+        # is difficult.
+        #
+        # RetinaFace is used because group/event photos
+        # frequently contain:
+        #
+        # - side faces
+        # - tilted heads
+        # - partially visible faces
+        # - smaller faces
+        # - different lighting
+        #
+        # ----------------------------------------------------
+
         results = DeepFace.represent(
             img_path=temp_path,
+
             model_name="Facenet512",
+
             detector_backend="retinaface",
+
             enforce_detection=False,
-            align=True
+
+            align=True,
+
+            normalization="Facenet"
         )
 
-        # Extract and L2 Normalize all face embeddings
+
+        # ----------------------------------------------------
+        # 5. Make sure result is a list
+        # ----------------------------------------------------
+
+        if not isinstance(results, list):
+            results = [results]
+
+
+        print("FACES DETECTED:", len(results))
+
+
+        # ----------------------------------------------------
+        # 6. Process every detected face
+        # ----------------------------------------------------
+
         embeddings = []
-        for res in results:
-            # Optional size check to filter out tiny background artifacts if needed
-            face_area = res.get("facial_area", {})
-            w = face_area.get("w", 0)
-            h = face_area.get("h", 0)
-            if w > 0 and h > 0 and (w < 30 or h < 30):
+
+        detected_faces = []
+
+
+        for i, res in enumerate(results):
+
+            face_area = res.get(
+                "facial_area",
+                {}
+            )
+
+            x = int(face_area.get("x", 0))
+            y = int(face_area.get("y", 0))
+
+            w = int(face_area.get("w", 0))
+            h = int(face_area.get("h", 0))
+
+
+            # ------------------------------------------------
+            # Detection confidence
+            # ------------------------------------------------
+
+            confidence = float(
+                face_area.get(
+                    "confidence",
+                    res.get("face_confidence", 0)
+                ) or 0
+            )
+
+
+            print("\n--------------------------------")
+            print(f"FACE {i + 1}")
+            print("--------------------------------")
+            print("x:", x)
+            print("y:", y)
+            print("w:", w)
+            print("h:", h)
+            print("confidence:", confidence)
+
+
+            # ------------------------------------------------
+            # Ignore completely invalid detections
+            # ------------------------------------------------
+
+            if w <= 0 or h <= 0:
+
+                print("❌ Invalid face dimensions")
                 continue
 
-            raw_vector = np.array(res["embedding"])
-            
-            # L2 Normalize the vector so Cosine Similarity works precisely in Supabase
-            norm = np.linalg.norm(raw_vector)
-            if norm > 0:
-                normalized_vector = (raw_vector / norm).tolist()
-                embeddings.append(normalized_vector)
+
+            # ------------------------------------------------
+            # We intentionally DO NOT reject small faces
+            # here.
+            #
+            # Event photos can contain distant people.
+            #
+            # A 30px face can still be useful depending on
+            # image resolution.
+            #
+            # We only reject extremely tiny detections.
+            # ------------------------------------------------
+
+            if w < 15 or h < 15:
+
+                print("⚠️ Extremely small face ignored")
+                continue
+
+
+            # ------------------------------------------------
+            # Get embedding
+            # ------------------------------------------------
+
+            raw_embedding = res.get("embedding")
+
+            if raw_embedding is None:
+
+                print("❌ No embedding returned")
+                continue
+
+
+            vector = np.asarray(
+                raw_embedding,
+                dtype=np.float32
+            )
+
+
+            # ------------------------------------------------
+            # Verify dimensions
+            # ------------------------------------------------
+
+            if vector.shape[0] != 512:
+
+                print(
+                    "❌ Invalid embedding dimension:",
+                    vector.shape[0]
+                )
+
+                continue
+
+
+            # ------------------------------------------------
+            # Remove NaN / Infinity
+            # ------------------------------------------------
+
+            if not np.all(np.isfinite(vector)):
+
+                print(
+                    "❌ Embedding contains invalid values"
+                )
+
+                continue
+
+
+            # ------------------------------------------------
+            # L2 NORMALIZATION
+            # ------------------------------------------------
+
+            norm = np.linalg.norm(vector)
+
+
+            if norm <= 0:
+
+                print("❌ Zero vector")
+                continue
+
+
+            normalized_vector = (
+                vector / norm
+            ).astype(
+                np.float32
+            )
+
+
+            # ------------------------------------------------
+            # Final numerical validation
+            # ------------------------------------------------
+
+            final_norm = np.linalg.norm(
+                normalized_vector
+            )
+
+
+            print(
+                "Embedding dimensions:",
+                len(normalized_vector)
+            )
+
+            print(
+                "Original norm:",
+                float(norm)
+            )
+
+            print(
+                "Final norm:",
+                float(final_norm)
+            )
+
+
+            # ------------------------------------------------
+            # Store embedding
+            # ------------------------------------------------
+
+            embeddings.append(
+                normalized_vector.tolist()
+            )
+
+
+            detected_faces.append({
+                "index": i + 1,
+                "x": x,
+                "y": y,
+                "width": w,
+                "height": h,
+                "confidence": confidence
+            })
+
+
+            print("✅ FACE EMBEDDING ACCEPTED")
+
+
+        # ----------------------------------------------------
+        # 7. Final response
+        # ----------------------------------------------------
+
+        print("\n")
+        print("================================================")
+        print("EXTRACTION COMPLETE")
+        print("================================================")
+        print("Detected:", len(results))
+        print("Accepted:", len(embeddings))
+        print("================================================")
+
 
         return {
             "success": True,
+
             "model": "Facenet512",
+
+            "detector": "RetinaFace",
+
+            "dimensions": 512,
+
             "face_count": len(embeddings),
+
+            "faces": detected_faces,
+
             "embeddings": embeddings
         }
 
+
+    # ========================================================
+    # ERROR
+    # ========================================================
+
     except Exception as e:
+
+        print("\n")
+        print("================================================")
+        print("❌ EVRIS FACE API ERROR")
+        print("================================================")
+        print(str(e))
+        print("================================================")
+
+
         return {
             "success": False,
             "error": str(e)
         }
 
+
+    # ========================================================
+    # CLEANUP
+    # ========================================================
+
     finally:
-        if temp_path and os.path.exists(temp_path):
-            os.remove(temp_path)
+
+        if temp_path:
+
+            try:
+
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+
+            except Exception as cleanup_error:
+
+                print(
+                    "⚠️ Temporary file cleanup failed:",
+                    cleanup_error
+                )

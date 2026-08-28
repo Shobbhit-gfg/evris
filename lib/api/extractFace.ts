@@ -1,61 +1,87 @@
+const FACE_API_URL =
+  process.env.NEXT_PUBLIC_FACE_API_URL ||
+  "http://127.0.0.1:8000";
+
+export type FaceEmbeddingResponse = {
+  success: boolean;
+  model?: string;
+  detector?: string;
+  dimensions?: number;
+  face_count?: number;
+  embeddings?: number[][];
+  error?: string;
+};
+
+/**
+ * Extracts multiple face embeddings from an image (ideal for event uploads & multi-face crowds).
+ */
+export async function getFaceEmbeddingsFromServer(
+  file: File
+): Promise<number[][]> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  console.log("🐍 Sending image to Face API:", file.name);
+
+  const response = await fetch(
+    `${FACE_API_URL}/extract-vector`,
+    {
+      method: "POST",
+      body: formData,
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Face API failed with status ${response.status}`
+    );
+  }
+
+  const data: FaceEmbeddingResponse = await response.json();
+
+  console.log("🐍 Face API response:", data);
+
+  if (!data.success) {
+    throw new Error(
+      data.error || "Face extraction failed."
+    );
+  }
+
+  const embeddings = data.embeddings || [];
+
+  console.log(
+    `🧠 Faces returned by Python: ${embeddings.length}`
+  );
+
+  return embeddings.filter(
+    (embedding) =>
+      Array.isArray(embedding) &&
+      embedding.length === 512
+  );
+}
+
+/**
+ * Extracts a single primary face embedding (backward compatible wrapper for selfie searches).
+ */
 export async function getFaceEmbeddingFromServer(
   file: File
 ): Promise<number[] | null> {
   try {
-    const formData = new FormData();
-    formData.append("file", file);
+    const embeddings = await getFaceEmbeddingsFromServer(file);
 
-    const response = await fetch("http://127.0.0.1:8000/extract-vector", {
-      method: "POST",
-      body: formData,
-    });
-
-    if (!response.ok) {
+    if (embeddings.length === 0) {
       throw new Error(
-        `Face API returned HTTP ${response.status}`
+        "No face detected in the image. Please upload a clearer photo with your face clearly visible."
       );
     }
 
-    const result = await response.json();
-
-    console.log("🐍 Face API response:", result);
-
-    if (!result.success) {
-      throw new Error(
-        result.error || "Face vector extraction failed"
-      );
-    }
-
-    // Handle case where FastAPI returns an array of embeddings (multi-face / group support)
-    let selectedEmbedding: number[] | null = null;
-
-    if (Array.isArray(result.embeddings) && result.embeddings.length > 0) {
-      selectedEmbedding = result.embeddings[0];
-    } else if (Array.isArray(result.embedding)) {
-      // Fallback if legacy single embedding response is used
-      selectedEmbedding = result.embedding;
-    }
-
-    if (!selectedEmbedding || !Array.isArray(selectedEmbedding)) {
-      throw new Error("No face detected in the image. Please upload a clearer photo with your face clearly visible.");
-    }
-
-    if (selectedEmbedding.length !== 512) {
-      throw new Error(
-        `Expected 512-dimensional vector, received ${selectedEmbedding.length}`
-      );
-    }
-
-    console.log(
-      `✅ Received valid 512-dimensional face vector`
-    );
-
-    return selectedEmbedding;
+    console.log("✅ Received valid 512-dimensional face vector");
+    return embeddings[0];
   } catch (error: any) {
     console.error("❌ Face extraction failed:", error);
-    
-    // Rethrow a clean, user-friendly error message so the UI alert can catch it
-    const errorMessage = error?.message || "Unable to process face. Please try a different photo.";
+    const errorMessage =
+      error?.message ||
+      "Unable to process face. Please try a different photo.";
     throw new Error(errorMessage);
   }
 }

@@ -7,7 +7,7 @@ import { supabase } from "@/lib/supabase";
 import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
 import AdminNavbar from "@/components/layout/adminnavbar";
-import { getFaceEmbeddingFromServer } from "@/lib/api/extractFace";
+import { getFaceEmbeddingsFromServer } from "@/lib/api/extractFace";
 
 const placeholderColors = [
   "#30bcc3",
@@ -58,8 +58,12 @@ export default function CreateEventPage() {
   const handleAddPhotos = (files: FileList | null) => {
     if (!files) return;
 
+    const validFiles = Array.from(files).filter((file) =>
+      file.type.startsWith("image/")
+    );
+
     setPhotos((prev) => {
-      const newPhotos = [...prev, ...Array.from(files)];
+      const newPhotos = [...prev, ...validFiles];
       return newPhotos.slice(0, 20);
     });
   };
@@ -83,6 +87,7 @@ export default function CreateEventPage() {
     );
 
     setCoverIndex((prev) => {
+      if (photos.length <= 1) return 0;
       if (index === prev) return 0;
       if (index < prev) return prev - 1;
       return prev;
@@ -95,6 +100,8 @@ export default function CreateEventPage() {
 
   const handleCreateEvent = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+
+    if (loading) return;
 
     console.log("=================================");
     console.log("🚀 CREATE EVENT STARTED");
@@ -246,54 +253,64 @@ export default function CreateEventPage() {
 
           if (photoDbError) {
             console.error("❌ Photo Database Insert Error:", photoDbError);
-          } else {
-            console.log("✅ Photo record inserted:", photoData);
+            continue;
+          } 
+            
+          console.log("✅ Photo record inserted:", photoData);
 
-            // ==================================================
-            // 3D. EXTRACT FACE EMBEDDING USING PYTHON
-            // ==================================================
+          // ==================================================
+          // 3D. EXTRACT FACE EMBEDDINGS USING PYTHON (MULTI-FACE SUPPORT)
+          // ==================================================
 
-            console.log("🐍 Sending image to Python Face API...");
+          console.log("🐍 Sending image to Python Face API...");
 
-            try {
-              const embedding = await getFaceEmbeddingFromServer(photo);
+          try {
+            const embeddings = await getFaceEmbeddingsFromServer(photo);
 
-              if (embedding) {
-                console.log(`✅ Face embedding received for ${photo.name}`);
-                console.log("Embedding dimensions:", embedding.length);
+            console.log(`🧠 Python returned ${embeddings.length} faces`);
 
-                // ----------------------------------------------
-                // SAVE VECTOR TO SUPABASE
-                // ----------------------------------------------
-
-                const { data: embeddingData, error: embeddingError } = await supabase
-                  .from("face_embeddings")
-                  .insert({
-                    event_id: eventId,
-                    image_url: publicUrl,
-                    embedding: embedding,
-                  })
-                  .select()
-                  .single();
-
-                if (embeddingError) {
-                  console.error("❌ Face Embedding Database Error:", embeddingError);
-                  console.error("Embedding error details:", JSON.stringify(embeddingError, null, 2));
-                } else {
-                  console.log("=================================");
-                  console.log("🎉 FACE VECTOR SAVED SUCCESSFULLY");
-                  console.log("Photo:", photo.name);
-                  console.log("Vector dimensions:", embedding.length);
-                  console.log("Embedding ID:", embeddingData?.id);
-                  console.log("Event ID:", eventId);
-                  console.log("=================================");
-                }
-              } else {
-                console.log(`⚠️ No face embedding returned for ${photo.name}`);
-              }
-            } catch (faceErr) {
-              console.error(`❌ Python Face Extraction Error for ${photo.name}:`, faceErr);
+            if (embeddings.length === 0) {
+              console.log(`⚠️ No faces detected in ${photo.name}`);
+              continue;
             }
+
+            for (let faceIndex = 0; faceIndex < embeddings.length; faceIndex++) {
+              const embedding = embeddings[faceIndex];
+
+              console.log(`👤 Saving FACE ${faceIndex + 1}/${embeddings.length}`);
+
+              if (embedding.length !== 512) {
+                console.error("❌ Invalid embedding dimensions:", embedding.length);
+                continue;
+              }
+
+              // ----------------------------------------------
+              // SAVE VECTOR TO SUPABASE
+              // ----------------------------------------------
+
+              const { data: embeddingData, error: embeddingError } = await supabase
+                .from("face_embeddings")
+                .insert({
+                  event_id: eventId,
+                  image_url: publicUrl,
+                  embedding: embedding,
+                })
+                .select()
+                .single();
+
+              if (embeddingError) {
+                console.error("❌ Face Embedding Database Error:", embeddingError);
+                console.error("Embedding error details:", JSON.stringify(embeddingError, null, 2));
+              } else {
+                console.log("✅ FACE VECTOR SAVED SUCCESSFULLY");
+                console.log("Photo:", photo.name);
+                console.log("Vector dimensions:", embedding.length);
+                console.log("Embedding ID:", embeddingData?.id);
+                console.log("Event ID:", eventId);
+              }
+            }
+          } catch (faceErr) {
+            console.error(`❌ Python Face Extraction Error for ${photo.name}:`, faceErr);
           }
         }
       }
@@ -306,7 +323,7 @@ export default function CreateEventPage() {
       console.log("🎉 EVENT CREATION COMPLETE");
       console.log("=================================");
 
-      setMessage("Event created successfully! Photos and face data are being processed.");
+      setMessage("Event created successfully! Photos and face data have been processed.");
 
       setTimeout(() => {
         router.push("/admin/events");
@@ -450,7 +467,10 @@ export default function CreateEventPage() {
                     accept="image/*"
                     multiple
                     className="hidden"
-                    onChange={(e) => handleAddPhotos(e.target.files)}
+                    onChange={(e) => {
+                      handleAddPhotos(e.target.files);
+                      e.target.value = "";
+                    }}
                   />
                   <div className="h-[52px] w-[52px] rounded-full bg-[#30bcc3]" />
                   <p className="body-font text-center text-[16px] text-[#737378]">
@@ -494,13 +514,13 @@ export default function CreateEventPage() {
                             onClick={(e) => {
                               e.stopPropagation();
                               handleRemovePhoto(i);
-                            }}
-                            className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-[11px] text-white opacity-0 transition group-hover:opacity-100"
-                          >
+                          }}
+                          className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-[11px] text-white opacity-0 transition group-hover:opacity-100"
+                        >
                             ×
-                          </span>
-                        </button>
-                      ))}
+                        </span>
+                      </button>
+                    ))}
                 </div>
 
                 {/* COVER INFO */}
@@ -519,46 +539,46 @@ export default function CreateEventPage() {
                 >
                   Add More Photos
                 </button>
-              </div>
-            </form>
-
-            {/* MESSAGE */}
-            {message && (
-              <p className="body-font mt-6 text-[15px] text-[#737378]">
-                {message}
-              </p>
-            )}
-
-            {/* ==========================================
-                ACTION BUTTONS
-            ========================================== */}
-
-            <div className="mt-10 flex items-center gap-4">
-              <Link
-                href="/admin/events"
-                className="body-font flex h-[58px] items-center justify-center rounded-full border-[1.5px] border-black px-9 text-[18px] font-medium text-[#121212] transition hover:bg-black hover:text-white"
-              >
-                Cancel
-              </Link>
-              <button
-                type="button"
-                onClick={() => {
-                  const form = document.querySelector(
-                    "form"
-                  ) as HTMLFormElement | null;
-                  form?.requestSubmit();
-                }}
-                disabled={loading}
-                className="body-font flex h-[58px] items-center justify-center rounded-full bg-black px-9 text-[18px] font-medium text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-lg active:scale-[0.98] disabled:opacity-60"
-              >
-                {loading ? "Publishing..." : "Publish Event"}
-              </button>
             </div>
+          </form>
+
+          {/* MESSAGE */}
+          {message && (
+            <p className="body-font mt-6 text-[15px] text-[#737378]">
+              {message}
+            </p>
+          )}
+
+          {/* ==========================================
+                ACTION BUTTONS
+          ========================================== */}
+
+          <div className="mt-10 flex items-center gap-4">
+            <Link
+              href="/admin/events"
+              className="body-font flex h-[58px] items-center justify-center rounded-full border-[1.5px] border-black px-9 text-[18px] font-medium text-[#121212] transition hover:bg-black hover:text-white"
+            >
+              Cancel
+            </Link>
+            <button
+              type="button"
+              onClick={() => {
+                const form = document.querySelector(
+                  "form"
+              ) as HTMLFormElement | null;
+              form?.requestSubmit();
+              }}
+              disabled={loading}
+              className="body-font flex h-[58px] items-center justify-center rounded-full bg-black px-9 text-[18px] font-medium text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-lg active:scale-[0.98] disabled:opacity-60"
+            >
+              {loading ? "Publishing..." : "Publish Event"}
+            </button>
           </div>
         </div>
-      </main>
+      </div>
+    </main>
 
-      <Footer />
-    </>
+    <Footer />
+  </>
   );
 }
