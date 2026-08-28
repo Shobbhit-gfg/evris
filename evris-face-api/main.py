@@ -1,12 +1,11 @@
-from fastapi import FastAPI, UploadFile, File  # pyright: ignore[reportMissingImports]
+from fastapi import FastAPI, UploadFile, File 
 from fastapi.middleware.cors import CORSMiddleware
 from deepface import DeepFace
 import tempfile
 import os
 
-app = FastAPI(title="EVRIS Face Recognition API")
+app = FastAPI(title="evris Face Recognition API")
 
-# Add CORS Middleware to allow requests from Next.js frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -21,7 +20,7 @@ app.add_middleware(
 @app.get("/")
 def home():
     return {
-        "status": "EVRIS Face API Running",
+        "status": "evris Face API Running",
         "service": "Face Embedding Service"
     }
 
@@ -30,32 +29,32 @@ async def extract_vector(file: UploadFile = File(...)):
     temp_path = None
 
     try:
-        # Create temporary image file
         suffix = os.path.splitext(file.filename or ".jpg")[1]
 
         with tempfile.NamedTemporaryFile(
             delete=False,
             suffix=suffix
         ) as temp_file:
-
             contents = await file.read()
             temp_file.write(contents)
             temp_path = temp_file.name
 
-        # Generate ArcFace embedding
-        result = DeepFace.represent(
+        # Generate ArcFace embeddings for all detected faces (handles group shots & crowds)
+        results = DeepFace.represent(
             img_path=temp_path,
             model_name="ArcFace",
+            detector_backend="retinaface",
             enforce_detection=True
         )
 
-        embedding = result[0]["embedding"]
+        # Extract all face embeddings found in the image
+        embeddings = [res["embedding"] for res in results]
 
         return {
             "success": True,
             "model": "ArcFace",
-            "dimensions": len(embedding),
-            "embedding": embedding
+            "face_count": len(embeddings),
+            "embeddings": embeddings
         }
 
     except Exception as e:

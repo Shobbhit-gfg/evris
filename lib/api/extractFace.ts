@@ -26,13 +26,23 @@ export async function getFaceEmbeddingFromServer(
       );
     }
 
-    if (!Array.isArray(result.embedding)) {
-      throw new Error("Face API did not return a valid embedding");
+    // Handle case where FastAPI returns an array of embeddings (multi-face / group support)
+    let selectedEmbedding: number[] | null = null;
+
+    if (Array.isArray(result.embeddings) && result.embeddings.length > 0) {
+      selectedEmbedding = result.embeddings[0];
+    } else if (Array.isArray(result.embedding)) {
+      // Fallback if legacy single embedding response is used
+      selectedEmbedding = result.embedding;
     }
 
-    if (result.embedding.length !== 512) {
+    if (!selectedEmbedding || !Array.isArray(selectedEmbedding)) {
+      throw new Error("No face detected in the image. Please upload a clearer photo with your face clearly visible.");
+    }
+
+    if (selectedEmbedding.length !== 512) {
       throw new Error(
-        `Expected 512-dimensional vector, received ${result.embedding.length}`
+        `Expected 512-dimensional vector, received ${selectedEmbedding.length}`
       );
     }
 
@@ -40,9 +50,12 @@ export async function getFaceEmbeddingFromServer(
       `✅ Received valid 512-dimensional face vector`
     );
 
-    return result.embedding;
-  } catch (error) {
+    return selectedEmbedding;
+  } catch (error: any) {
     console.error("❌ Face extraction failed:", error);
-    return null;
+    
+    // Rethrow a clean, user-friendly error message so the UI alert can catch it
+    const errorMessage = error?.message || "Unable to process face. Please try a different photo.";
+    throw new Error(errorMessage);
   }
 }

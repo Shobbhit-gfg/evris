@@ -90,7 +90,7 @@ export default function SingleEventPage() {
    * Keep these values the same as Find-Me.
    */
 
-  const MATCH_THRESHOLD = 0.24;
+  const MATCH_THRESHOLD = 0.32;
   const MATCH_COUNT = 100;
 
   /*
