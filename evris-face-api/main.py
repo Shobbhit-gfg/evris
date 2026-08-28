@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from deepface import DeepFace
 import tempfile
 import os
+import numpy as np
 
 app = FastAPI(title="evris Face Recognition API")
 
@@ -39,20 +40,36 @@ async def extract_vector(file: UploadFile = File(...)):
             temp_file.write(contents)
             temp_path = temp_file.name
 
-        # Generate ArcFace embeddings for all detected faces (handles group shots & crowds)
+        # Generate FaceNet512 embeddings
         results = DeepFace.represent(
             img_path=temp_path,
-            model_name="ArcFace",
+            model_name="Facenet512",
             detector_backend="retinaface",
-            enforce_detection=True
+            enforce_detection=False,
+            align=True
         )
 
-        # Extract all face embeddings found in the image
-        embeddings = [res["embedding"] for res in results]
+        # Extract and L2 Normalize all face embeddings
+        embeddings = []
+        for res in results:
+            # Optional size check to filter out tiny background artifacts if needed
+            face_area = res.get("facial_area", {})
+            w = face_area.get("w", 0)
+            h = face_area.get("h", 0)
+            if w > 0 and h > 0 and (w < 30 or h < 30):
+                continue
+
+            raw_vector = np.array(res["embedding"])
+            
+            # L2 Normalize the vector so Cosine Similarity works precisely in Supabase
+            norm = np.linalg.norm(raw_vector)
+            if norm > 0:
+                normalized_vector = (raw_vector / norm).tolist()
+                embeddings.append(normalized_vector)
 
         return {
             "success": True,
-            "model": "ArcFace",
+            "model": "Facenet512",
             "face_count": len(embeddings),
             "embeddings": embeddings
         }
@@ -64,6 +81,5 @@ async def extract_vector(file: UploadFile = File(...)):
         }
 
     finally:
-        # Delete temporary image
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
