@@ -48,7 +48,7 @@ os.makedirs("debug_faces", exist_ok=True)
 @app.on_event("startup")
 async def startup_event():
     print("\n================================================")
-    print("🔥 WARMING UP AI MODELS...")
+    print("🔥 WARMING UP AI MODELS (YOLOv8 + Facenet512)...")
     print("================================================")
     
     dummy_img = np.zeros((200, 200, 3), dtype=np.uint8)
@@ -59,10 +59,10 @@ async def startup_event():
         DeepFace.represent(
             img_path=temp_dummy,
             model_name="Facenet512",
-            detector_backend="retinaface",
+            detector_backend="yolov8",
             enforce_detection=False
         )
-        print("🚀 DeepFace (Facenet512 + RetinaFace) loaded into memory!")
+        print("🚀 DeepFace (Facenet512 + YOLOv8) loaded into memory!")
     except Exception as e:
         print("⚠️ Warmup note:", e)
     finally:
@@ -82,7 +82,7 @@ def home():
         "status": "EVRIS Face API Running",
         "service": "Face Embedding Service",
         "model": "Facenet512",
-        "detector": "RetinaFace",
+        "detector": "YOLOv8",
         "dimensions": 512
     }
 
@@ -152,9 +152,9 @@ async def extract_vector(file: UploadFile = File(...)):
         height, width = img.shape[:2]
         
         # ----------------------------------------------------
-        # 3.5 DOWNSCALE HIGH-RES IMAGES (5x-10x SPEEDUP)
+        # 3.5 AGGRESSIVE DOWNSCALE FOR SPEED (800px)
         # ----------------------------------------------------
-        max_dim = 1280
+        max_dim = 800
 
         if max(height, width) > max_dim:
             scale = max_dim / float(max(height, width))
@@ -164,7 +164,7 @@ async def extract_vector(file: UploadFile = File(...)):
             # Resize image
             img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
             
-            # Overwrite the temp file with the downscaled version for DeepFace
+            # Overwrite the temp file with the downscaled version
             cv2.imwrite(temp_path, img)
             
             # Update vars for logging
@@ -177,38 +177,20 @@ async def extract_vector(file: UploadFile = File(...)):
 
         print("\n")
         print("================================================")
-        print("EVRIS FACE EXTRACTION")
+        print("EVRIS FACE EXTRACTION (ULTRA-FAST)")
         print("================================================")
         print("FILE:", file.filename)
         print("WIDTH:", width)
         print("HEIGHT:", height)
         if is_resized:
-            print("STATUS: Downscaled for speed ⚡")
+            print("STATUS: Downscaled to 800px for speed ⚡")
         print("MODEL: Facenet512")
-        print("DETECTOR: RetinaFace")
+        print("DETECTOR: YOLOv8")
         print("================================================")
 
 
         # ----------------------------------------------------
-        # 4. Generate embeddings
-        # ----------------------------------------------------
-        #
-        # IMPORTANT:
-        #
-        # enforce_detection=False
-        #
-        # allows DeepFace to continue even when detection
-        # is difficult.
-        #
-        # RetinaFace is used because group/event photos
-        # frequently contain:
-        #
-        # - side faces
-        # - tilted heads
-        # - partially visible faces
-        # - smaller faces
-        # - different lighting
-        #
+        # 4. Generate embeddings with YOLOv8
         # ----------------------------------------------------
 
         results = DeepFace.represent(
@@ -216,7 +198,7 @@ async def extract_vector(file: UploadFile = File(...)):
 
             model_name="Facenet512",
 
-            detector_backend="retinaface",
+            detector_backend="yolov8",
 
             enforce_detection=False,
 
@@ -293,15 +275,7 @@ async def extract_vector(file: UploadFile = File(...)):
 
 
             # ------------------------------------------------
-            # We intentionally DO NOT reject small faces
-            # here.
-            #
-            # Event photos can contain distant people.
-            #
-            # A 30px face can still be useful depending on
-            # image resolution.
-            #
-            # We only reject extremely tiny detections.
+            # Ignore tiny background artifacts
             # ------------------------------------------------
 
             if w < 15 or h < 15:
@@ -440,7 +414,7 @@ async def extract_vector(file: UploadFile = File(...)):
 
             "model": "Facenet512",
 
-            "detector": "RetinaFace",
+            "detector": "YOLOv8",
 
             "dimensions": 512,
 
