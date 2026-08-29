@@ -42,6 +42,37 @@ os.makedirs("debug_faces", exist_ok=True)
 
 
 # ============================================================
+# MODEL WARMUP (PREVENTS COLD START DELAY)
+# ============================================================
+
+@app.on_event("startup")
+async def startup_event():
+    print("\n================================================")
+    print("🔥 WARMING UP AI MODELS...")
+    print("================================================")
+    
+    dummy_img = np.zeros((200, 200, 3), dtype=np.uint8)
+    temp_dummy = "warmup_temp.jpg"
+    cv2.imwrite(temp_dummy, dummy_img)
+    
+    try:
+        DeepFace.represent(
+            img_path=temp_dummy,
+            model_name="Facenet512",
+            detector_backend="retinaface",
+            enforce_detection=False
+        )
+        print("🚀 DeepFace (Facenet512 + RetinaFace) loaded into memory!")
+    except Exception as e:
+        print("⚠️ Warmup note:", e)
+    finally:
+        if os.path.exists(temp_dummy):
+            os.remove(temp_dummy)
+            
+    print("================================================\n")
+
+
+# ============================================================
 # HOME
 # ============================================================
 
@@ -119,6 +150,29 @@ async def extract_vector(file: UploadFile = File(...)):
 
 
         height, width = img.shape[:2]
+        
+        # ----------------------------------------------------
+        # 3.5 DOWNSCALE HIGH-RES IMAGES (5x-10x SPEEDUP)
+        # ----------------------------------------------------
+        max_dim = 1280
+
+        if max(height, width) > max_dim:
+            scale = max_dim / float(max(height, width))
+            new_w = int(width * scale)
+            new_h = int(height * scale)
+            
+            # Resize image
+            img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            
+            # Overwrite the temp file with the downscaled version for DeepFace
+            cv2.imwrite(temp_path, img)
+            
+            # Update vars for logging
+            width, height = new_w, new_h
+            
+            is_resized = True
+        else:
+            is_resized = False
 
 
         print("\n")
@@ -128,6 +182,8 @@ async def extract_vector(file: UploadFile = File(...)):
         print("FILE:", file.filename)
         print("WIDTH:", width)
         print("HEIGHT:", height)
+        if is_resized:
+            print("STATUS: Downscaled for speed ⚡")
         print("MODEL: Facenet512")
         print("DETECTOR: RetinaFace")
         print("================================================")

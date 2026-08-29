@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
-import { Upload, Search, Loader2, CheckCircle2 } from "lucide-react";
+import { Upload, Sparkles, Loader2, CheckCircle2 } from "lucide-react";
 import { getFaceEmbeddingFromServer } from "@/lib/api/extractFace";
 
 type EventRow = {
@@ -32,9 +32,7 @@ export default function FaceSearchStartPage() {
   const [events, setEvents] = useState<EventRow[]>([]);
   const [eventsLoading, setEventsLoading] = useState(true);
 
-  const [selectedEventId, setSelectedEventId] = useState<string | null>(
-    null
-  );
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
 
   const [selfie, setSelfie] = useState<File | null>(null);
   const [selfiePreview, setSelfiePreview] = useState<string | null>(null);
@@ -44,6 +42,15 @@ export default function FaceSearchStartPage() {
 
   const [matches, setMatches] = useState<MatchResult[] | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
+
+  /*
+   * ============================================================
+   * FACE SEARCH CONFIGURATION
+   * ============================================================
+   */
+
+  const MATCH_THRESHOLD = 0.45;
+  const MATCH_COUNT = 100;
 
   // ============================================================
   // LOAD EVENTS
@@ -153,17 +160,13 @@ export default function FaceSearchStartPage() {
   // ============================================================
 
   const handleStartSearch = async () => {
-    // ------------------------------------------------------------
-    // VALIDATION
-    // ------------------------------------------------------------
-
     if (!selectedEventId) {
       setStatusMessage("Please select an event first.");
       return;
     }
 
     if (!selfie) {
-      setStatusMessage("Please upload a selfie first.");
+      setStatusMessage("Please upload a selfie to search.");
       return;
     }
 
@@ -171,110 +174,130 @@ export default function FaceSearchStartPage() {
       return;
     }
 
-    // ------------------------------------------------------------
-    // START SEARCH
-    // ------------------------------------------------------------
+    /*
+     * Start searching
+     */
 
     setSearching(true);
     setMatches(null);
 
-    setStatusMessage(
-      "Extracting face vector via Python AI engine..."
-    );
+    setStatusMessage("Extracting face vector via Python AI engine...");
 
     try {
-      // ==========================================================
-      // STEP 1
-      // Extract 512-dimensional ArcFace embedding
-      // ==========================================================
-
-      console.log("====================================");
-      console.log("🧠 FACE SEARCH STARTED");
-      console.log("====================================");
+      console.log("");
+      console.log("========================================");
+      console.log("🔎 STARTING GLOBAL FACE SEARCH");
+      console.log("========================================");
 
       console.log("📌 Event ID:", selectedEventId);
-      console.log("📷 Selfie:", selfie.name);
+      console.log("📌 Match threshold:", MATCH_THRESHOLD);
+      console.log("📌 Match count:", MATCH_COUNT);
+      console.log("📌 Selfie:", selfie.name);
+
+      /*
+       * ========================================================
+       * STEP 1
+       * Extract 512-dimensional embedding
+       * ========================================================
+       */
+
+      console.log("🧠 STEP 1: Extracting face embedding...");
 
       const queryVector = await getFaceEmbeddingFromServer(selfie);
 
-      // ==========================================================
-      // VALIDATE FACE EMBEDDING
-      // ==========================================================
+      /*
+       * Check face detection
+       */
 
       if (!queryVector) {
         setStatusMessage(
-          "No face vector was generated. Please upload a clearer selfie."
+          "No face detected. Please upload a clearer selfie."
         );
         return;
       }
 
+      /*
+       * Check embedding dimensions
+       */
+
       if (queryVector.length !== 512) {
         console.error(
-          "❌ Invalid embedding dimension:",
+          "❌ Invalid embedding dimensions:",
           queryVector.length
         );
 
         setStatusMessage(
-          "Invalid face embedding. Please upload another selfie."
+          "Invalid face vector. Please upload another selfie."
         );
 
         return;
       }
 
-      console.log("✅ Face vector received");
+      console.log("✅ Face embedding extracted");
       console.log("📐 Vector dimensions:", queryVector.length);
 
-      // ==========================================================
-      // STEP 2
-      // SEARCH SUPABASE VECTOR DATABASE
-      // ==========================================================
+      /*
+       * ========================================================
+       * STEP 2
+       * Search pgvector using match_faces RPC
+       * ========================================================
+       */
 
       setStatusMessage("Searching photos for your face...");
 
-      console.log("------------------------------------");
-      console.log("🔎 VECTOR SEARCH");
-      console.log("------------------------------------");
-
-      console.log("Event filter:", selectedEventId);
-      console.log("Threshold:", 0.32);
-      console.log("Match count:", 30);
+      console.log("");
+      console.log("🔎 STEP 2: Vector search");
+      console.log("----------------------------------------");
+      console.log("RPC: match_faces");
+      console.log("Event ID:", selectedEventId);
+      console.log("Threshold:", MATCH_THRESHOLD);
+      console.log("Count:", MATCH_COUNT);
+      console.log("----------------------------------------");
 
       const { data, error } = await supabase.rpc("match_faces", {
         query_embedding: queryVector,
+        match_threshold: MATCH_THRESHOLD,
+        match_count: MATCH_COUNT,
 
-        // SAME THRESHOLD AS EVENT PAGE
-        match_threshold: 0.32,
-
-        // SAME RESULT LIMIT AS EVENT PAGE
-        match_count: 30,
-
-        // CRITICAL:
-        // Search ONLY inside selected event
+        /*
+         * Search ONLY the selected event.
+         */
         filter_event_id: selectedEventId,
       });
 
-      // ==========================================================
-      // RPC ERROR
-      // ==========================================================
+      /*
+       * ========================================================
+       * RPC ERROR
+       * ========================================================
+       */
 
       if (error) {
-        console.error("❌ Search RPC Error:", error);
+        console.error("");
+        console.error("❌ RPC SEARCH ERROR");
+        console.error("Message:", error.message);
+        console.error("Details:", error.details);
+        console.error("Hint:", error.hint);
+        console.error("Code:", error.code);
 
-        setStatusMessage(
-          `Database search failed: ${error.message}`
-        );
-
+        setStatusMessage(`Database search failed: ${error.message}`);
         return;
       }
 
-      console.log("✅ RPC search completed");
+      /*
+       * ========================================================
+       * STEP 3
+       * PROCESS RESULTS
+       * ========================================================
+       */
 
-      console.log("Raw RPC results:", data);
+      console.log("");
+      console.log("✅ RPC SEARCH COMPLETED");
+      console.log("Raw results:", data);
+      console.log(`📊 Raw match count: ${data?.length || 0}`);
 
-      // ==========================================================
-      // STEP 3
-      // NORMALIZE RESULTS
-      // ==========================================================
+      /*
+       * Convert database results
+       */
 
       const foundMatches: MatchResult[] = (data || [])
         .map((match: any) => ({
@@ -283,73 +306,64 @@ export default function FaceSearchStartPage() {
           image_url: match.image_url,
           similarity: Number(match.similarity),
         }))
-        // Safety check:
-        // Never display a photo from another event.
         .filter(
           (match: MatchResult) =>
+            Boolean(match.id) &&
+            Boolean(match.image_url) &&
+            Number.isFinite(match.similarity) &&
             String(match.event_id) === String(selectedEventId)
         );
 
-      // ==========================================================
-      // SORT BY SIMILARITY
-      // ==========================================================
+      /*
+       * Sort from highest similarity to lowest similarity.
+       */
 
-      foundMatches.sort(
-        (a, b) => b.similarity - a.similarity
-      );
+      foundMatches.sort((a, b) => b.similarity - a.similarity);
 
-      console.log("------------------------------------");
-      console.log("🎯 FINAL MATCHES");
-      console.log("------------------------------------");
+      /*
+       * Debug
+       */
 
-      console.log("Selected event:", selectedEventId);
-      console.log("Total matches:", foundMatches.length);
+      console.log("");
+      console.log("========================================");
+      console.log("🎯 FINAL EVENT MATCHES");
+      console.log("========================================");
+      console.log(`Total valid matches: ${foundMatches.length}`);
 
       foundMatches.forEach((match, index) => {
         console.log(
-          `${index + 1}. ${(
-            match.similarity * 100
-          ).toFixed(2)}%`,
-          match.image_url
+          `${index + 1}. ${(match.similarity * 100).toFixed(2)}% | ${match.image_url}`
         );
       });
 
-      // ==========================================================
-      // STEP 4
-      // STORE RESULTS
-      // ==========================================================
+      console.log("========================================");
+
+      /*
+       * Save results
+       */
 
       setMatches(foundMatches);
 
-      // ==========================================================
-      // STATUS
-      // ==========================================================
+      /*
+       * Status
+       */
 
       if (foundMatches.length > 0) {
-        setStatusMessage(
-          `Found ${foundMatches.length} matching photos in this event.`
-        );
+        setStatusMessage(`Found ${foundMatches.length} matching photos!`);
       } else {
-        setStatusMessage(
-          "No matching photos found in this event."
-        );
+        setStatusMessage("No matching photos found for you in this event.");
       }
-    } catch (err: any) {
-      console.error(
-        "❌ Face search execution error:",
-        err
-      );
+    } catch (error: any) {
+      console.error("");
+      console.error("❌ FACE SEARCH FAILED");
+      console.error(error);
 
       setStatusMessage(
-        err?.message ||
+        error?.message ||
           "Unable to process your selfie. Please try another photo."
       );
     } finally {
       setSearching(false);
-
-      console.log("====================================");
-      console.log("🏁 FACE SEARCH FINISHED");
-      console.log("====================================");
     }
   };
 
@@ -382,7 +396,6 @@ export default function FaceSearchStartPage() {
 
       <main className="min-h-screen bg-[#f8f9fa] pt-28 pb-20 px-4">
         <div className="mx-auto max-w-[1100px]">
-
           {/* ======================================================
               HEADER
           ====================================================== */}
@@ -393,8 +406,8 @@ export default function FaceSearchStartPage() {
             </h1>
 
             <p className="body-font text-[#666] mt-2 text-[18px]">
-              Select an event and upload a selfie to locate your
-              pictures using Python AI face recognition.
+              Select an event and upload a selfie to locate your pictures using Python
+              AI face recognition.
             </p>
           </div>
 
@@ -403,89 +416,60 @@ export default function FaceSearchStartPage() {
           ====================================================== */}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-
             {/* ====================================================
                 EVENT SELECTOR
             ==================================================== */}
 
             <div className="rounded-[28px] bg-white p-8 shadow-sm border border-[#e5e5e5] flex flex-col justify-between">
-
               <div>
-
                 <h2 className="heading-font text-[22px] font-semibold text-[#111111] mb-4">
                   1. Select Event
                 </h2>
 
                 {eventsLoading ? (
-
                   <div className="flex items-center gap-3 py-6 text-[#888]">
                     <Loader2 className="animate-spin h-5 w-5" />
                     Loading events...
                   </div>
-
                 ) : events.length === 0 ? (
-
-                  <p className="text-[#888] py-4">
-                    No events found in Supabase.
-                  </p>
-
+                  <p className="text-[#888] py-4">No events found in Supabase.</p>
                 ) : (
-
                   <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2">
-
                     {events.map((ev) => {
-
                       const eventId = String(ev.id);
 
-                      const isSelected =
-                        eventId === selectedEventId;
+                      const isSelected = eventId === selectedEventId;
 
                       const title =
-                        ev.title ||
-                        ev.name ||
-                        ev.event_name ||
-                        "Untitled Event";
+                        ev.title || ev.name || ev.event_name || "Untitled Event";
 
                       const imageUrl =
-                        ev.cover_image_url ||
-                        ev.cover_image ||
-                        ev.image ||
-                        ev.banner;
+                        ev.cover_image_url || ev.cover_image || ev.image || ev.banner;
 
                       return (
-
                         <div
                           key={eventId}
-                          onClick={() =>
-                            handleEventSelect(eventId)
-                          }
+                          onClick={() => handleEventSelect(eventId)}
                           className={`flex items-center gap-4 p-3 rounded-[16px] cursor-pointer transition border ${
                             isSelected
                               ? "border-black bg-[#f0f0f0]"
                               : "border-[#eeeeee] hover:bg-[#f9f9f9]"
                           }`}
                         >
-
                           {/* EVENT IMAGE */}
 
                           <div className="relative h-12 w-12 rounded-lg overflow-hidden bg-[#e0e0e0] flex-shrink-0">
-
                             {imageUrl ? (
-
                               <img
                                 src={imageUrl}
                                 alt={title}
                                 className="h-full w-full object-cover"
                               />
-
                             ) : (
-
                               <div className="h-full w-full bg-[#ccc] flex items-center justify-center text-xs text-white">
                                 Event
                               </div>
-
                             )}
-
                           </div>
 
                           {/* EVENT NAME */}
@@ -493,34 +477,23 @@ export default function FaceSearchStartPage() {
                           <span className="font-medium text-[#111] text-[16px]">
                             {title}
                           </span>
-
                         </div>
-
                       );
                     })}
-
                   </div>
-
                 )}
-
               </div>
 
               {/* SELECTED EVENT */}
 
               <div className="mt-8 pt-6 border-t border-[#eee]">
-
                 <p className="text-xs text-[#888]">
-
                   Selected Event ID:
-
                   <span className="font-mono text-[#333] ml-1">
                     {selectedEventId || "None"}
                   </span>
-
                 </p>
-
               </div>
-
             </div>
 
             {/* ====================================================
@@ -528,9 +501,7 @@ export default function FaceSearchStartPage() {
             ==================================================== */}
 
             <div className="rounded-[28px] bg-white p-8 shadow-sm border border-[#e5e5e5] flex flex-col justify-between">
-
               <div>
-
                 <h2 className="heading-font text-[22px] font-semibold text-[#111111] mb-4">
                   2. Upload Selfie
                 </h2>
@@ -542,42 +513,31 @@ export default function FaceSearchStartPage() {
                     e.preventDefault();
                     setIsDragging(true);
                   }}
-                  onDragLeave={() =>
-                    setIsDragging(false)
-                  }
+                  onDragLeave={() => setIsDragging(false)}
                   onDrop={handleDrop}
-                  onClick={() =>
-                    fileInputRef.current?.click()
-                  }
+                  onClick={() => fileInputRef.current?.click()}
                   className={`border-2 border-dashed rounded-[20px] p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center min-h-[220px] ${
                     isDragging
                       ? "border-black bg-[#f5f5f5]"
                       : "border-[#cccccc] hover:border-black bg-[#fafafa]"
                   }`}
                 >
-
                   <input
                     ref={fileInputRef}
                     type="file"
                     accept="image/jpeg,image/png,image/webp"
                     className="hidden"
-                    onChange={(e) =>
-                      handleFile(e.target.files?.[0])
-                    }
+                    onChange={(e) => handleFile(e.target.files?.[0])}
                   />
 
                   {selfiePreview ? (
-
                     <div className="flex flex-col items-center gap-3">
-
-                      <div className="h-28 w-28 rounded-full overflow-hidden border-2 border-black shadow-sm">
-
+                      <div className="h-28 w-28 rounded-full overflow-hidden border-2 border-black shadow-md">
                         <img
                           src={selfiePreview}
                           alt="Selfie Preview"
                           className="h-full w-full object-cover"
                         />
-
                       </div>
 
                       <span className="text-sm text-[#444] font-medium">
@@ -587,17 +547,11 @@ export default function FaceSearchStartPage() {
                       <span className="text-xs text-[#30bcc3]">
                         Click to change photo
                       </span>
-
                     </div>
-
                   ) : (
-
                     <div className="flex flex-col items-center gap-3">
-
                       <div className="h-12 w-12 rounded-full bg-[#ebebeb] flex items-center justify-center">
-
                         <Upload className="h-6 w-6 text-[#555]" />
-
                       </div>
 
                       <p className="text-[15px] font-medium text-[#333]">
@@ -607,67 +561,45 @@ export default function FaceSearchStartPage() {
                       <span className="text-xs text-[#888]">
                         Supports JPG, PNG, WEBP
                       </span>
-
                     </div>
-
                   )}
-
                 </div>
-
               </div>
 
               {/* SEARCH BUTTON */}
 
               <div>
-
                 <button
-                  disabled={
-                    !selectedEventId ||
-                    !selfie ||
-                    searching
-                  }
+                  disabled={!selectedEventId || !selfie || searching}
                   onClick={handleStartSearch}
                   className={`mt-8 w-full h-[56px] rounded-full flex items-center justify-center gap-2 text-[16px] font-medium text-white transition-all ${
-                    !selectedEventId ||
-                    !selfie ||
-                    searching
+                    !selectedEventId || !selfie || searching
                       ? "bg-[#ccc] cursor-not-allowed"
                       : "bg-black hover:bg-[#222] active:scale-[0.99]"
                   }`}
                 >
-
                   {searching ? (
-
                     <>
                       <Loader2 className="animate-spin h-5 w-5" />
                       Processing AI Search...
                     </>
-
                   ) : (
-
                     <>
-                      <Search className="h-5 w-5" />
+                      <Sparkles className="h-5 w-5" />
                       Search My Photos
                     </>
-
                   )}
-
                 </button>
 
                 {/* STATUS */}
 
                 {statusMessage && (
-
                   <p className="text-center text-xs text-[#666] mt-3 font-medium">
                     {statusMessage}
                   </p>
-
                 )}
-
               </div>
-
             </div>
-
           </div>
 
           {/* ======================================================
@@ -675,21 +607,16 @@ export default function FaceSearchStartPage() {
           ====================================================== */}
 
           {matches !== null && (
-
             <div className="mt-12 rounded-[28px] bg-white p-8 border border-[#e5e5e5] shadow-sm">
-
               {/* RESULT HEADER */}
 
               <div className="flex items-center justify-between mb-6">
-
                 <div className="flex items-center gap-2">
-
                   <CheckCircle2 className="h-6 w-6 text-[#1a8287]" />
 
                   <h2 className="heading-font text-[24px] font-semibold text-[#111111]">
                     Found {matches.length} Matches
                   </h2>
-
                 </div>
 
                 <button
@@ -698,29 +625,22 @@ export default function FaceSearchStartPage() {
                 >
                   Reset Search
                 </button>
-
               </div>
 
               {/* RESULTS */}
 
               {matches.length === 0 ? (
-
                 <p className="text-[#777] text-center py-8">
-                  No matching faces found in this event.
-                  Try uploading a clearer selfie.
+                  No matching faces found in this event. Try uploading a clearer
+                  selfie.
                 </p>
-
               ) : (
-
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-
                   {matches.map((match, idx) => (
-
                     <div
                       key={match.id || idx}
                       className="group relative h-52 rounded-[18px] overflow-hidden bg-[#eee] border border-[#e5e5e5]"
                     >
-
                       <img
                         src={match.image_url}
                         alt={`Match ${idx + 1}`}
@@ -730,22 +650,14 @@ export default function FaceSearchStartPage() {
                       {/* SIMILARITY */}
 
                       <div className="absolute bottom-2 right-2 rounded-full bg-black/70 px-2.5 py-1 text-[12px] font-semibold text-white backdrop-blur-md">
-                        {(match.similarity * 100).toFixed(1)}%
-                        similarity
+                        {(match.similarity * 100).toFixed(1)}% similarity
                       </div>
-
                     </div>
-
                   ))}
-
                 </div>
-
               )}
-
             </div>
-
           )}
-
         </div>
       </main>
 
