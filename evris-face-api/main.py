@@ -6,6 +6,7 @@ import tempfile
 import os
 import numpy as np
 import cv2
+import time
 
 
 # ============================================================
@@ -48,7 +49,7 @@ os.makedirs("debug_faces", exist_ok=True)
 @app.on_event("startup")
 async def startup_event():
     print("\n================================================")
-    print("🔥 WARMING UP AI MODELS (YOLOv8 + Facenet512)...")
+    print("🔥 WARMING UP AI MODELS (yolov8n + Facenet512)...")
     print("================================================")
     
     dummy_img = np.zeros((200, 200, 3), dtype=np.uint8)
@@ -59,10 +60,10 @@ async def startup_event():
         DeepFace.represent(
             img_path=temp_dummy,
             model_name="Facenet512",
-            detector_backend="yolov8",
+            detector_backend="yolov8n",
             enforce_detection=False
         )
-        print("🚀 DeepFace (Facenet512 + YOLOv8) loaded into memory!")
+        print("🚀 DeepFace (Facenet512 + yolov8n) loaded into memory!")
     except Exception as e:
         print("⚠️ Warmup note:", e)
     finally:
@@ -82,7 +83,7 @@ def home():
         "status": "EVRIS Face API Running",
         "service": "Face Embedding Service",
         "model": "Facenet512",
-        "detector": "YOLOv8",
+        "detector": "yolov8n",
         "dimensions": 512
     }
 
@@ -94,6 +95,7 @@ def home():
 @app.post("/extract-vector")
 async def extract_vector(file: UploadFile = File(...)):
 
+    start_time = time.time()
     temp_path = None
 
     try:
@@ -137,7 +139,7 @@ async def extract_vector(file: UploadFile = File(...)):
 
 
         # ----------------------------------------------------
-        # 3. Read image with OpenCV
+        # 3. Read image with OpenCV & Resize
         # ----------------------------------------------------
 
         img = cv2.imread(temp_path)
@@ -148,31 +150,25 @@ async def extract_vector(file: UploadFile = File(...)):
                 "error": "Unable to read uploaded image."
             }
 
+        MAX_WIDTH = 1600
+        if img is not None and img.shape[1] > MAX_WIDTH:
+            scale = MAX_WIDTH / img.shape[1]
+
+            img = cv2.resize(
+                img,
+                (
+                    int(img.shape[1] * scale),
+                    int(img.shape[0] * scale)
+                )
+            )
+
+            cv2.imwrite(temp_path, img)
+
+            print("\nIMAGE RESIZED")
+            print("NEW WIDTH:", img.shape[1])
+            print("NEW HEIGHT:", img.shape[0])
 
         height, width = img.shape[:2]
-        
-        # ----------------------------------------------------
-        # 3.5 AGGRESSIVE DOWNSCALE FOR SPEED (800px)
-        # ----------------------------------------------------
-        max_dim = 800
-
-        if max(height, width) > max_dim:
-            scale = max_dim / float(max(height, width))
-            new_w = int(width * scale)
-            new_h = int(height * scale)
-            
-            # Resize image
-            img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
-            
-            # Overwrite the temp file with the downscaled version
-            cv2.imwrite(temp_path, img)
-            
-            # Update vars for logging
-            width, height = new_w, new_h
-            
-            is_resized = True
-        else:
-            is_resized = False
 
 
         print("\n")
@@ -182,15 +178,13 @@ async def extract_vector(file: UploadFile = File(...)):
         print("FILE:", file.filename)
         print("WIDTH:", width)
         print("HEIGHT:", height)
-        if is_resized:
-            print("STATUS: Downscaled to 800px for speed ⚡")
         print("MODEL: Facenet512")
-        print("DETECTOR: YOLOv8")
+        print("DETECTOR: yolov8n")
         print("================================================")
 
 
         # ----------------------------------------------------
-        # 4. Generate embeddings with YOLOv8
+        # 4. Generate embeddings with yolov8n
         # ----------------------------------------------------
 
         results = DeepFace.represent(
@@ -198,7 +192,7 @@ async def extract_vector(file: UploadFile = File(...)):
 
             model_name="Facenet512",
 
-            detector_backend="yolov8",
+            detector_backend="yolov8n",
 
             enforce_detection=False,
 
@@ -406,6 +400,7 @@ async def extract_vector(file: UploadFile = File(...)):
         print("================================================")
         print("Detected:", len(results))
         print("Accepted:", len(embeddings))
+        print("TOTAL TIME:", round(time.time() - start_time, 2), "seconds")
         print("================================================")
 
 
@@ -414,7 +409,7 @@ async def extract_vector(file: UploadFile = File(...)):
 
             "model": "Facenet512",
 
-            "detector": "YOLOv8",
+            "detector": "yolov8n",
 
             "dimensions": 512,
 
