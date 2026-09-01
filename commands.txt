@@ -1,0 +1,17 @@
+ evris - COMMAND SHORTCUTS
+
+
+# 1. Activate Python Virtual Environment (Windows CMD)
+cd evris-face-api
+.\venv\Scripts\Activate.ps1
+
+# 2. Start FastAPI Development Server
+uvicorn main:app --reload
+
+# 3. Install Python Dependencies
+pip install -r requirements.txt
+
+# 4. Git Workflow
+git add .
+git commit -m "your message here"
+git push origin main
