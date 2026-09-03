@@ -1,17 +1,15 @@
- evris - COMMAND SHORTCUTS
-
-
-# 1. Activate Python Virtual Environment (Windows CMD)
+# 1. Activate Python Virtual Environment
 cd evris-face-api
 .\venv\Scripts\Activate.ps1
 
 # 2. Start FastAPI Development Server
-uvicorn main:app --reload
+uvicorn main:app --reload --port 8000
 
-# 3. Install Python Dependencies
+# 3. Install/Update Python Dependencies (if needed)
 pip install -r requirements.txt
 
-# 4. Git Workflow
+# 4. Complete Git Workflow & Push Updates
+cd ..
 git add .
-git commit -m "your message here"
+git commit -m "fix: resolve face API local integration and update search workflow"
 git push origin main
