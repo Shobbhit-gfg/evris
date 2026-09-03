@@ -1,6 +1,9 @@
-const FACE_API_URL =
-  process.env.NEXT_PUBLIC_FACE_API_URL ||
-  "http://127.0.0.1:8000";
+// Set to true if you are running FastAPI locally via uvicorn, false if testing against Render
+const USE_LOCAL_API = true;
+
+const FACE_API_URL = USE_LOCAL_API
+  ? "http://127.0.0.1:8000"
+  : process.env.NEXT_PUBLIC_FACE_API_URL || "https://evris-face-api.onrender.com";
 
 export type FaceEmbeddingResponse = {
   success: boolean;
@@ -21,7 +24,7 @@ export async function getFaceEmbeddingsFromServer(
   const formData = new FormData();
   formData.append("file", file);
 
-  console.log("🐍 Sending image to Face API:", file.name);
+  console.log(`🐍 Sending image to Face API (${FACE_API_URL}):`, file.name);
 
   const response = await fetch(
     `${FACE_API_URL}/extract-vector`,

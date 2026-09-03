@@ -32,54 +32,54 @@ export default function AdminFindMePage() {
     accuracy: "99.2%",
   });
 
-  // Fetch true database analytics and calculate real accuracy ratio on mount
-  useEffect(() => {
-    const fetchRealAdminStats = async () => {
-      try {
-        // 1. Get exact count of face embeddings indexed
-        const { count: embeddingCount } = await supabase
-          .from("face_embeddings")
-          .select("*", { count: "exact", head: true });
+  // Fetch true database analytics and calculate live metrics on mount
+  const fetchRealAdminStats = async () => {
+    try {
+      // 1. Get exact count of face embeddings indexed in database
+      const { count: embeddingCount } = await supabase
+        .from("face_embeddings")
+        .select("*", { count: "exact", head: true });
 
-        // 2. Get exact count of total event photos uploaded
-        const { count: photoCount } = await supabase
-          .from("photos")
-          .select("*", { count: "exact", head: true });
+      // 2. Get exact count of total photos uploaded across events
+      const { count: photoCount } = await supabase
+        .from("photos")
+        .select("*", { count: "exact", head: true });
 
-        const totalEmbeddings = embeddingCount || 0;
-        const totalPhotos = photoCount || 0;
+      const totalEmbeddings = embeddingCount || 0;
+      const totalPhotos = photoCount || 0;
 
-        // Retrieve search history metrics from localStorage
-        const savedSearches = typeof window !== "undefined" ? localStorage.getItem("admin_search_count") : "0";
-        const savedSuccesses = typeof window !== "undefined" ? localStorage.getItem("admin_success_count") : "0";
-        
-        const totalSearchesNum = savedSearches ? parseInt(savedSearches, 10) : 0;
-        const totalSuccessesNum = savedSuccesses ? parseInt(savedSuccesses, 10) : 0;
+      // Retrieve dynamic search metrics from localStorage (or switch to a Supabase analytics table if available)
+      const savedSearches = typeof window !== "undefined" ? localStorage.getItem("admin_search_count") : "0";
+      const savedSuccesses = typeof window !== "undefined" ? localStorage.getItem("admin_success_count") : "0";
+      
+      const totalSearchesNum = savedSearches ? parseInt(savedSearches, 10) : 0;
+      const totalSuccessesNum = savedSuccesses ? parseInt(savedSuccesses, 10) : 0;
 
-        // Calculate true success/recognition accuracy percentage dynamically
-        let calculatedAccuracy = "99.2%";
-        if (totalSearchesNum > 0) {
-          const ratio = (totalSuccessesNum / totalSearchesNum) * 100;
-          calculatedAccuracy = `${ratio.toFixed(1)}%`;
-        }
-
-        setStats({
-          facesIndexed: totalEmbeddings.toLocaleString(),
-          totalSearches: totalSearchesNum.toLocaleString(),
-          totalMatches: totalPhotos.toLocaleString(),
-          accuracy: calculatedAccuracy,
-        });
-      } catch (err) {
-        console.error("Error fetching real admin stats:", err);
-        setStats({
-          facesIndexed: "0",
-          totalSearches: "0",
-          totalMatches: "0",
-          accuracy: "99.2%",
-        });
+      // Calculate dynamic success accuracy percentage
+      let calculatedAccuracy = "99.2%";
+      if (totalSearchesNum > 0) {
+        const ratio = (totalSuccessesNum / totalSearchesNum) * 100;
+        calculatedAccuracy = `${ratio.toFixed(1)}%`;
       }
-    };
 
+      setStats({
+        facesIndexed: totalEmbeddings.toLocaleString(),
+        totalSearches: totalSearchesNum.toLocaleString(),
+        totalMatches: totalPhotos.toLocaleString(),
+        accuracy: calculatedAccuracy,
+      });
+    } catch (err) {
+      console.error("Error fetching real admin stats:", err);
+      setStats({
+        facesIndexed: "0",
+        totalSearches: "0",
+        totalMatches: "0",
+        accuracy: "99.2%",
+      });
+    }
+  };
+
+  useEffect(() => {
     fetchRealAdminStats();
   }, []);
 
@@ -97,7 +97,7 @@ export default function AdminFindMePage() {
     handleFile(e.dataTransfer.files?.[0]);
   };
 
-  // Real AI Face Search execution for Admin (Global Search)
+  // Real AI Face Search execution for Admin with live state updates
   const handleUploadSearch = async () => {
     if (!selfie) {
       fileInputRef.current?.click();
@@ -143,7 +143,7 @@ export default function AdminFindMePage() {
       foundMatches.sort((a, b) => b.similarity - a.similarity);
       setMatches(foundMatches);
 
-      // Track search attempts and successful matches for accurate accuracy calculation
+      // Update search metrics dynamically
       const currentSearches = typeof window !== "undefined" ? parseInt(localStorage.getItem("admin_search_count") || "0", 10) + 1 : 1;
       let currentSuccesses = typeof window !== "undefined" ? parseInt(localStorage.getItem("admin_success_count") || "0", 10) : 0;
 
@@ -157,6 +157,9 @@ export default function AdminFindMePage() {
       }
 
       const liveAccuracy = currentSearches > 0 ? `${((currentSuccesses / currentSearches) * 100).toFixed(1)}%` : "99.2%";
+
+      // Re-fetch database counts so "Faces Indexed" and "Total Matches Found" update instantly if new photos were added
+      await fetchRealAdminStats();
 
       setStats((prev) => ({
         ...prev,
