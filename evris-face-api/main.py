@@ -32,21 +32,20 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
+
+    # Allow the production frontend and local development
     allow_origins=[
-        # Production
         "https://evris.vercel.app",
-
-        # Current Vercel deployment
-        "https://evris-f1zjytuzh-shobhhit.vercel.app",
-
-        # Local development
         "http://localhost:3000",
     ],
+
+    # Automatically allow Vercel preview/deployment URLs
+    allow_origin_regex=r"https://.*\.vercel\.app",
+
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # ============================================================
 # DEBUG DIRECTORY
