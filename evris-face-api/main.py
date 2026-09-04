@@ -46,7 +46,7 @@ os.makedirs("debug_faces", exist_ok=True)
 @app.on_event("startup")
 async def startup_event():
     print("\n================================================")
-    print("🔥 WARMING UP AI MODELS (yolov8n + Facenet512)...")
+    print("🔥 WARMING UP AI MODELS (yolov8 + Facenet512)...")
     print("================================================")
     
     dummy_img = np.zeros((200, 200, 3), dtype=np.uint8)
@@ -57,10 +57,10 @@ async def startup_event():
         DeepFace.represent(
             img_path=temp_dummy,
             model_name="Facenet512",
-            detector_backend="yolov8n",
+            detector_backend="yolov8",
             enforce_detection=False
         )
-        print("🚀 DeepFace (Facenet512 + yolov8n) loaded into memory!")
+        print("🚀 DeepFace (Facenet512 + yolov8) loaded into memory!")
     except Exception as e:
         print("⚠️ Warmup note:", e)
     finally:
@@ -80,7 +80,7 @@ def home():
         "status": "EVRIS Face API Running",
         "service": "Face Embedding Service",
         "model": "Facenet512",
-        "detector": "yolov8n",
+        "detector": "yolov8",
         "dimensions": 512
     }
 
@@ -170,31 +170,26 @@ async def extract_vector(file: UploadFile = File(...)):
 
         print("\n")
         print("================================================")
-        print("evrris FACE EXTRACTION (ULTRA-FAST)")
+        print("EVRIS FACE EXTRACTION (ULTRA-FAST)")
         print("================================================")
         print("FILE:", file.filename)
         print("WIDTH:", width)
         print("HEIGHT:", height)
         print("MODEL: Facenet512")
-        print("DETECTOR: yolov8n")
+        print("DETECTOR: yolov8")
         print("================================================")
 
 
         # ----------------------------------------------------
-        # 4. Generate embeddings with yolov8n
+        # 4. Generate embeddings with yolov8
         # ----------------------------------------------------
 
         results = DeepFace.represent(
             img_path=temp_path,
-
             model_name="Facenet512",
-
-            detector_backend="yolov8n",
-
+            detector_backend="yolov8",
             enforce_detection=False,
-
             align=True,
-
             normalization="Facenet"
         )
 
@@ -215,9 +210,7 @@ async def extract_vector(file: UploadFile = File(...)):
         # ----------------------------------------------------
 
         embeddings = []
-
         detected_faces = []
-
 
         for i, res in enumerate(results):
 
@@ -228,7 +221,6 @@ async def extract_vector(file: UploadFile = File(...)):
 
             x = int(face_area.get("x", 0))
             y = int(face_area.get("y", 0))
-
             w = int(face_area.get("w", 0))
             h = int(face_area.get("h", 0))
 
@@ -260,7 +252,6 @@ async def extract_vector(file: UploadFile = File(...)):
             # ------------------------------------------------
 
             if w <= 0 or h <= 0:
-
                 print("❌ Invalid face dimensions")
                 continue
 
@@ -270,7 +261,6 @@ async def extract_vector(file: UploadFile = File(...)):
             # ------------------------------------------------
 
             if w < 15 or h < 15:
-
                 print("⚠️ Extremely small face ignored")
                 continue
 
@@ -282,7 +272,6 @@ async def extract_vector(file: UploadFile = File(...)):
             raw_embedding = res.get("embedding")
 
             if raw_embedding is None:
-
                 print("❌ No embedding returned")
                 continue
 
@@ -298,12 +287,10 @@ async def extract_vector(file: UploadFile = File(...)):
             # ------------------------------------------------
 
             if vector.shape[0] != 512:
-
                 print(
                     "❌ Invalid embedding dimension:",
                     vector.shape[0]
                 )
-
                 continue
 
 
@@ -312,11 +299,9 @@ async def extract_vector(file: UploadFile = File(...)):
             # ------------------------------------------------
 
             if not np.all(np.isfinite(vector)):
-
                 print(
                     "❌ Embedding contains invalid values"
                 )
-
                 continue
 
 
@@ -326,9 +311,7 @@ async def extract_vector(file: UploadFile = File(...)):
 
             norm = np.linalg.norm(vector)
 
-
             if norm <= 0:
-
                 print("❌ Zero vector")
                 continue
 
@@ -348,17 +331,14 @@ async def extract_vector(file: UploadFile = File(...)):
                 normalized_vector
             )
 
-
             print(
                 "Embedding dimensions:",
                 len(normalized_vector)
             )
-
             print(
                 "Original norm:",
                 float(norm)
             )
-
             print(
                 "Final norm:",
                 float(final_norm)
@@ -373,7 +353,6 @@ async def extract_vector(file: UploadFile = File(...)):
                 normalized_vector.tolist()
             )
 
-
             detected_faces.append({
                 "index": i + 1,
                 "x": x,
@@ -382,7 +361,6 @@ async def extract_vector(file: UploadFile = File(...)):
                 "height": h,
                 "confidence": confidence
             })
-
 
             print("✅ FACE EMBEDDING ACCEPTED")
 
@@ -400,20 +378,13 @@ async def extract_vector(file: UploadFile = File(...)):
         print("TOTAL TIME:", round(time.time() - start_time, 2), "seconds")
         print("================================================")
 
-
         return {
             "success": True,
-
             "model": "Facenet512",
-
-            "detector": "yolov8n",
-
+            "detector": "yolov8",
             "dimensions": 512,
-
             "face_count": len(embeddings),
-
             "faces": detected_faces,
-
             "embeddings": embeddings
         }
 
@@ -430,7 +401,6 @@ async def extract_vector(file: UploadFile = File(...)):
         print("================================================")
         print(str(e))
         print("================================================")
-
 
         return {
             "success": False,
