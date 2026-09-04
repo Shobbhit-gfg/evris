@@ -25,7 +25,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Updated to allow Vercel and all other origins
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -40,37 +40,6 @@ os.makedirs("debug_faces", exist_ok=True)
 
 
 # ============================================================
-# MODEL WARMUP (PREVENTS COLD START DELAY)
-# ============================================================
-
-@app.on_event("startup")
-async def startup_event():
-    print("\n================================================")
-    print("🔥 WARMING UP AI MODELS (yolov8 + Facenet512)...")
-    print("================================================")
-    
-    dummy_img = np.zeros((200, 200, 3), dtype=np.uint8)
-    temp_dummy = "warmup_temp.jpg"
-    cv2.imwrite(temp_dummy, dummy_img)
-    
-    try:
-        DeepFace.represent(
-            img_path=temp_dummy,
-            model_name="Facenet512",
-            detector_backend="yolov8",
-            enforce_detection=False
-        )
-        print("🚀 DeepFace (Facenet512 + yolov8) loaded into memory!")
-    except Exception as e:
-        print("⚠️ Warmup note:", e)
-    finally:
-        if os.path.exists(temp_dummy):
-            os.remove(temp_dummy)
-            
-    print("================================================\n")
-
-
-# ============================================================
 # HOME
 # ============================================================
 
@@ -80,7 +49,7 @@ def home():
         "status": "EVRIS Face API Running",
         "service": "Face Embedding Service",
         "model": "Facenet512",
-        "detector": "yolov8",
+        "detector": "retinaface",
         "dimensions": 512
     }
 
@@ -176,18 +145,18 @@ async def extract_vector(file: UploadFile = File(...)):
         print("WIDTH:", width)
         print("HEIGHT:", height)
         print("MODEL: Facenet512")
-        print("DETECTOR: yolov8")
+        print("DETECTOR: retinaface")
         print("================================================")
 
 
         # ----------------------------------------------------
-        # 4. Generate embeddings with yolov8
+        # 4. Generate embeddings with retinaface
         # ----------------------------------------------------
 
         results = DeepFace.represent(
             img_path=temp_path,
             model_name="Facenet512",
-            detector_backend="yolov8",
+            detector_backend="retinaface",
             enforce_detection=False,
             align=True,
             normalization="Facenet"
@@ -381,7 +350,7 @@ async def extract_vector(file: UploadFile = File(...)):
         return {
             "success": True,
             "model": "Facenet512",
-            "detector": "yolov8",
+            "detector": "retinaface",
             "dimensions": 512,
             "face_count": len(embeddings),
             "faces": detected_faces,
