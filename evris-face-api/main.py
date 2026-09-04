@@ -22,11 +22,24 @@ app = FastAPI(
 # ============================================================
 # CORS
 # ============================================================
+# IMPORTANT:
+# Your current Vercel deployment is:
+# https://evris-f1zjytuzh-shobhhit.vercel.app
+#
+# The browser was receiving HTTP 200 from Render, but the
+# response was blocked because this origin was not allowed.
+# ============================================================
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        # Production
         "https://evris.vercel.app",
+
+        # Current Vercel deployment
+        "https://evris-f1zjytuzh-shobhhit.vercel.app",
+
+        # Local development
         "http://localhost:3000",
     ],
     allow_credentials=True,
@@ -108,7 +121,7 @@ async def extract_vector(file: UploadFile = File(...)):
 
 
         # ----------------------------------------------------
-        # 3. Read image with OpenCV & Resize
+        # 3. Read image with OpenCV
         # ----------------------------------------------------
 
         img = cv2.imread(temp_path)
@@ -119,8 +132,15 @@ async def extract_vector(file: UploadFile = File(...)):
                 "error": "Unable to read uploaded image."
             }
 
+
+        # ----------------------------------------------------
+        # Resize large images
+        # ----------------------------------------------------
+
         MAX_WIDTH = 1200
-        if img is not None and img.shape[1] > MAX_WIDTH:
+
+        if img.shape[1] > MAX_WIDTH:
+
             scale = MAX_WIDTH / img.shape[1]
 
             img = cv2.resize(
@@ -131,14 +151,22 @@ async def extract_vector(file: UploadFile = File(...)):
                 )
             )
 
-            cv2.imwrite(temp_path, img)
+            cv2.imwrite(
+                temp_path,
+                img
+            )
 
             print("\nIMAGE RESIZED")
             print("NEW WIDTH:", img.shape[1])
             print("NEW HEIGHT:", img.shape[0])
 
+
         height, width = img.shape[:2]
 
+
+        # ----------------------------------------------------
+        # Debug information
+        # ----------------------------------------------------
 
         print("\n")
         print("================================================")
@@ -153,7 +181,7 @@ async def extract_vector(file: UploadFile = File(...)):
 
 
         # ----------------------------------------------------
-        # 4. Generate embeddings with Facenet512 + opencv detector
+        # 4. Generate embeddings
         # ----------------------------------------------------
 
         results = DeepFace.represent(
@@ -184,17 +212,45 @@ async def extract_vector(file: UploadFile = File(...)):
         embeddings = []
         detected_faces = []
 
+
         for i, res in enumerate(results):
+
+            # ------------------------------------------------
+            # Face bounding box
+            # ------------------------------------------------
 
             face_area = res.get(
                 "facial_area",
                 {}
             )
 
-            x = int(face_area.get("x", 0))
-            y = int(face_area.get("y", 0))
-            w = int(face_area.get("w", 0))
-            h = int(face_area.get("h", 0))
+            x = int(
+                face_area.get(
+                    "x",
+                    0
+                )
+            )
+
+            y = int(
+                face_area.get(
+                    "y",
+                    0
+                )
+            )
+
+            w = int(
+                face_area.get(
+                    "w",
+                    0
+                )
+            )
+
+            h = int(
+                face_area.get(
+                    "h",
+                    0
+                )
+            )
 
 
             # ------------------------------------------------
@@ -204,10 +260,17 @@ async def extract_vector(file: UploadFile = File(...)):
             confidence = float(
                 face_area.get(
                     "confidence",
-                    res.get("face_confidence", 0)
+                    res.get(
+                        "face_confidence",
+                        0
+                    )
                 ) or 0
             )
 
+
+            # ------------------------------------------------
+            # Debug face information
+            # ------------------------------------------------
 
             print("\n--------------------------------")
             print(f"FACE {i + 1}")
@@ -220,20 +283,28 @@ async def extract_vector(file: UploadFile = File(...)):
 
 
             # ------------------------------------------------
-            # Ignore completely invalid detections
+            # Ignore invalid detections
             # ------------------------------------------------
 
             if w <= 0 or h <= 0:
-                print("❌ Invalid face dimensions")
+
+                print(
+                    "❌ Invalid face dimensions"
+                )
+
                 continue
 
 
             # ------------------------------------------------
-            # Ignore tiny background artifacts
+            # Ignore extremely small detections
             # ------------------------------------------------
 
             if w < 15 or h < 15:
-                print("⚠️ Extremely small face ignored")
+
+                print(
+                    "⚠️ Extremely small face ignored"
+                )
+
                 continue
 
 
@@ -241,12 +312,22 @@ async def extract_vector(file: UploadFile = File(...)):
             # Get embedding
             # ------------------------------------------------
 
-            raw_embedding = res.get("embedding")
+            raw_embedding = res.get(
+                "embedding"
+            )
 
             if raw_embedding is None:
-                print("❌ No embedding returned")
+
+                print(
+                    "❌ No embedding returned"
+                )
+
                 continue
 
+
+            # ------------------------------------------------
+            # Convert embedding to NumPy
+            # ------------------------------------------------
 
             vector = np.asarray(
                 raw_embedding,
@@ -259,10 +340,12 @@ async def extract_vector(file: UploadFile = File(...)):
             # ------------------------------------------------
 
             if vector.shape[0] != 512:
+
                 print(
                     "❌ Invalid embedding dimension:",
                     vector.shape[0]
                 )
+
                 continue
 
 
@@ -270,10 +353,14 @@ async def extract_vector(file: UploadFile = File(...)):
             # Remove NaN / Infinity
             # ------------------------------------------------
 
-            if not np.all(np.isfinite(vector)):
+            if not np.all(
+                np.isfinite(vector)
+            ):
+
                 print(
                     "❌ Embedding contains invalid values"
                 )
+
                 continue
 
 
@@ -281,10 +368,16 @@ async def extract_vector(file: UploadFile = File(...)):
             # L2 NORMALIZATION
             # ------------------------------------------------
 
-            norm = np.linalg.norm(vector)
+            norm = np.linalg.norm(
+                vector
+            )
 
             if norm <= 0:
-                print("❌ Zero vector")
+
+                print(
+                    "❌ Zero vector"
+                )
+
                 continue
 
 
@@ -303,14 +396,17 @@ async def extract_vector(file: UploadFile = File(...)):
                 normalized_vector
             )
 
+
             print(
                 "Embedding dimensions:",
                 len(normalized_vector)
             )
+
             print(
                 "Original norm:",
                 float(norm)
             )
+
             print(
                 "Final norm:",
                 float(final_norm)
@@ -325,6 +421,11 @@ async def extract_vector(file: UploadFile = File(...)):
                 normalized_vector.tolist()
             )
 
+
+            # ------------------------------------------------
+            # Store face information
+            # ------------------------------------------------
+
             detected_faces.append({
                 "index": i + 1,
                 "x": x,
@@ -334,7 +435,10 @@ async def extract_vector(file: UploadFile = File(...)):
                 "confidence": confidence
             })
 
-            print("✅ FACE EMBEDDING ACCEPTED")
+
+            print(
+                "✅ FACE EMBEDDING ACCEPTED"
+            )
 
 
         # ----------------------------------------------------
@@ -345,10 +449,24 @@ async def extract_vector(file: UploadFile = File(...)):
         print("================================================")
         print("EXTRACTION COMPLETE")
         print("================================================")
-        print("Detected:", len(results))
-        print("Accepted:", len(embeddings))
-        print("TOTAL TIME:", round(time.time() - start_time, 2), "seconds")
+        print(
+            "Detected:",
+            len(results)
+        )
+        print(
+            "Accepted:",
+            len(embeddings)
+        )
+        print(
+            "TOTAL TIME:",
+            round(
+                time.time() - start_time,
+                2
+            ),
+            "seconds"
+        )
         print("================================================")
+
 
         return {
             "success": True,
@@ -374,6 +492,7 @@ async def extract_vector(file: UploadFile = File(...)):
         print(str(e))
         print("================================================")
 
+
         return {
             "success": False,
             "error": str(e)
@@ -390,8 +509,13 @@ async def extract_vector(file: UploadFile = File(...)):
 
             try:
 
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
+                if os.path.exists(
+                    temp_path
+                ):
+
+                    os.remove(
+                        temp_path
+                    )
 
             except Exception as cleanup_error:
 
