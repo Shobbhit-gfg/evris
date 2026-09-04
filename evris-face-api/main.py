@@ -49,7 +49,7 @@ def home():
         "status": "EVRIS Face API Running",
         "service": "Face Embedding Service",
         "model": "Facenet512",
-        "detector": "retinaface",
+        "detector": "opencv",
         "dimensions": 512
     }
 
@@ -116,7 +116,7 @@ async def extract_vector(file: UploadFile = File(...)):
                 "error": "Unable to read uploaded image."
             }
 
-        MAX_WIDTH = 1600
+        MAX_WIDTH = 1200
         if img is not None and img.shape[1] > MAX_WIDTH:
             scale = MAX_WIDTH / img.shape[1]
 
@@ -139,24 +139,24 @@ async def extract_vector(file: UploadFile = File(...)):
 
         print("\n")
         print("================================================")
-        print("EVRIS FACE EXTRACTION (ULTRA-FAST)")
+        print("EVRIS FACE EXTRACTION (RENDER SAFE)")
         print("================================================")
         print("FILE:", file.filename)
         print("WIDTH:", width)
         print("HEIGHT:", height)
         print("MODEL: Facenet512")
-        print("DETECTOR: retinaface")
+        print("DETECTOR: opencv")
         print("================================================")
 
 
         # ----------------------------------------------------
-        # 4. Generate embeddings with retinaface
+        # 4. Generate embeddings with Facenet512 + opencv detector
         # ----------------------------------------------------
 
         results = DeepFace.represent(
             img_path=temp_path,
             model_name="Facenet512",
-            detector_backend="retinaface",
+            detector_backend="opencv",
             enforce_detection=False,
             align=True,
             normalization="Facenet"
@@ -350,7 +350,7 @@ async def extract_vector(file: UploadFile = File(...)):
         return {
             "success": True,
             "model": "Facenet512",
-            "detector": "retinaface",
+            "detector": "opencv",
             "dimensions": 512,
             "face_count": len(embeddings),
             "faces": detected_faces,
