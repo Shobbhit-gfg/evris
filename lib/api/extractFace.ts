@@ -1,5 +1,5 @@
 // Set to true if you are running FastAPI locally via uvicorn, false if testing against Render
-const USE_LOCAL_API = true;
+const USE_LOCAL_API = false;
 
 const FACE_API_URL = USE_LOCAL_API
   ? "http://127.0.0.1:8000"
