@@ -14,6 +14,18 @@ import numpy as np
 # ============================================================
 # EVRIS FACE RECOGNITION API
 # Optimized for Render Free Tier (~512 MB RAM)
+#
+# Model:
+#   InsightFace Buffalo_SC
+#
+# Embedding:
+#   512-dimensional
+#
+# Detector:
+#   SCRFD
+#
+# Runtime:
+#   ONNX Runtime CPU
 # ============================================================
 
 
@@ -23,7 +35,7 @@ import numpy as np
 
 app = FastAPI(
     title="EVRIS Face Recognition API",
-    version="3.2.0"
+    version="3.3.0"
 )
 
 
@@ -51,47 +63,53 @@ app.add_middleware(
 # CONFIGURATION
 # ============================================================
 
-# ------------------------------------------------------------
+
+# ============================================================
 # IMAGE PROCESSING
-# ------------------------------------------------------------
+# ============================================================
 
 # Maximum image width before inference.
 #
-# 960px is enough for most event photography while
-# significantly reducing CPU/RAM usage compared with
-# processing 3000-6000px original photographs.
+# Large event photographs can easily be 3000-6000+ pixels wide.
+# Resizing them reduces RAM usage and inference time.
 #
 MAX_WIDTH = 960
 
 
-# ------------------------------------------------------------
+# ============================================================
 # FACE FILTERING
-# ------------------------------------------------------------
+# ============================================================
 
 # Ignore extremely tiny detected faces.
 #
-# Keep this relatively low because event photos may contain
+# Kept relatively low because event photographs can contain
 # people in the background.
 #
 MIN_FACE_WIDTH = 15
 MIN_FACE_HEIGHT = 15
 
 
-# ------------------------------------------------------------
+# ============================================================
 # EMBEDDING
-# ------------------------------------------------------------
+# ============================================================
 
 # IMPORTANT:
 #
-# Buffalo_S ArcFace produces 512-dimensional embeddings.
+# Buffalo_SC recognition model produces 512-dimensional
+# face embeddings.
 #
-# DO NOT reduce this to 256/128 by truncating the vector.
+# Keep this at 512.
 #
-# Keeping 512 dimensions preserves compatibility with:
+# This maintains compatibility with:
 #
-# Supabase pgvector vector(512)
-# EVRIS match_faces RPC
-# Existing stored embeddings
+# Supabase:
+#     vector(512)
+#
+# EVRIS:
+#     match_faces RPC
+#
+# Existing embedding structure:
+#     512 dimensions
 #
 EMBEDDING_DIMENSIONS = 512
 
@@ -100,29 +118,44 @@ EMBEDDING_DIMENSIONS = 512
 # INSIGHTFACE
 # ============================================================
 
-MODEL_NAME = "buffalo_s"
+# Use Buffalo_SC instead of Buffalo_S.
+#
+# Buffalo_SC is a much smaller InsightFace model pack and is
+# specifically useful for low-memory environments.
+#
+# It still produces 512-dimensional face embeddings.
+#
+MODEL_NAME = "buffalo_sc"
 
+
+# Face detector.
+#
+# Buffalo_SC uses SCRFD.
+#
 DETECTOR_NAME = "SCRFD"
 
 
-# CPU ONLY
+# ============================================================
+# ONNX PROVIDER
+# ============================================================
+
+# Render Free does not provide a GPU.
 #
-# Render free tier does not provide a GPU.
+# CPU execution is therefore used.
 #
 PROVIDERS = [
     "CPUExecutionProvider"
 ]
 
 
-# ------------------------------------------------------------
+# ============================================================
 # DETECTION SIZE
-# ------------------------------------------------------------
+# ============================================================
+
+# Smaller detection size reduces CPU and memory usage.
 #
-# 320x320 significantly reduces detection workload compared
-# with 640x640 or 512x512.
-#
-# The original uploaded image is resized separately to
-# MAX_WIDTH before inference.
+# The uploaded image is also resized to MAX_WIDTH before
+# inference.
 #
 DET_SIZE = (
     320,
@@ -134,7 +167,7 @@ DET_SIZE = (
 # UPLOAD LIMIT
 # ============================================================
 
-# Maximum request image size:
+# Maximum uploaded image size:
 # 15 MB
 #
 MAX_UPLOAD_SIZE = 15 * 1024 * 1024
@@ -185,6 +218,7 @@ model_start_time = time.time()
 try:
 
     print("Initializing InsightFace...")
+    print("Loading model:", MODEL_NAME)
 
     face_app = FaceAnalysis(
         name=MODEL_NAME,
@@ -196,7 +230,11 @@ try:
         det_size=DET_SIZE,
     )
 
-    model_load_time = time.time() - model_start_time
+    model_load_time = (
+        time.time()
+        -
+        model_start_time
+    )
 
     print("")
     print("================================================")
@@ -229,7 +267,7 @@ except Exception as e:
     print("================================================")
     print("INSIGHTFACE INITIALIZATION FAILED")
     print("================================================")
-    print("ERROR:", str(e))
+    print("ERROR:", repr(e))
     print("================================================")
 
 
@@ -367,7 +405,6 @@ async def extract_vector(
             filename
         )[1].lower()
 
-
         if suffix not in ALLOWED_EXTENSIONS:
 
             return {
@@ -383,23 +420,12 @@ async def extract_vector(
         # ====================================================
         # 4. READ FILE
         # ====================================================
+
+        # Read directly into memory.
         #
-        # We intentionally avoid tempfile.NamedTemporaryFile.
-        #
-        # OpenCV can decode the image directly from memory.
-        #
-        # This eliminates:
-        #
-        # upload -> disk -> OpenCV
-        #
-        # and instead uses:
-        #
-        # upload -> memory -> OpenCV
-        #
-        # This is faster and simpler for Render.
+        # We intentionally avoid temporary files.
         #
         contents = await file.read()
-
 
         if not contents:
 
@@ -415,7 +441,6 @@ async def extract_vector(
         # ====================================================
 
         file_size = len(contents)
-
 
         if file_size > MAX_UPLOAD_SIZE:
 
@@ -436,31 +461,30 @@ async def extract_vector(
 
         preprocess_start = time.time()
 
-
-        # Convert uploaded bytes into a NumPy uint8 buffer.
+        # Convert uploaded bytes into a NumPy buffer.
         #
         image_buffer = np.frombuffer(
             contents,
             dtype=np.uint8,
         )
 
-
         img = cv2.imdecode(
             image_buffer,
             cv2.IMREAD_COLOR,
         )
 
-
-        # image_buffer is no longer needed.
+        # image_buffer is no longer required.
         del image_buffer
-
 
         if img is None:
 
             return {
                 "success": False,
 
-                "error": "Unable to decode uploaded image.",
+                "error": (
+                    "Unable to decode "
+                    "uploaded image."
+                ),
             }
 
 
@@ -468,8 +492,9 @@ async def extract_vector(
         # 7. IMAGE DIMENSIONS
         # ====================================================
 
-        original_height, original_width = img.shape[:2]
-
+        original_height, original_width = (
+            img.shape[:2]
+        )
 
         if (
             original_width <= 0
@@ -489,7 +514,6 @@ async def extract_vector(
 
         resized = False
 
-
         if original_width > MAX_WIDTH:
 
             scale = (
@@ -497,7 +521,6 @@ async def extract_vector(
                 /
                 float(original_width)
             )
-
 
             new_width = MAX_WIDTH
 
@@ -510,7 +533,6 @@ async def extract_vector(
                 )
             )
 
-
             img = cv2.resize(
                 img,
                 (
@@ -520,12 +542,10 @@ async def extract_vector(
                 interpolation=cv2.INTER_AREA,
             )
 
-
             resized = True
 
 
         height, width = img.shape[:2]
-
 
         preprocess_time = (
             time.time()
@@ -540,9 +560,7 @@ async def extract_vector(
 
         inference_start = time.time()
 
-
         faces = face_app.get(img)
-
 
         inference_time = (
             time.time()
@@ -550,15 +568,19 @@ async def extract_vector(
             inference_start
         )
 
-
         detected_count = len(faces)
 
+
+        # ====================================================
+        # LOG
+        # ====================================================
 
         print(
             f"[EVRIS] {filename} | "
             f"{original_width}x{original_height} -> "
             f"{width}x{height} | "
             f"faces={detected_count} | "
+            f"preprocess={preprocess_time:.3f}s | "
             f"inference={inference_time:.3f}s"
         )
 
@@ -575,8 +597,8 @@ async def extract_vector(
                 request_start
             )
 
-
             return {
+
                 "success": True,
 
                 "model": MODEL_NAME,
@@ -619,13 +641,12 @@ async def extract_vector(
                 None,
             )
 
-
             if bbox is None or len(bbox) < 4:
 
                 continue
 
 
-            # Convert coordinates once.
+            # Convert bounding box coordinates.
             #
             x1 = max(
                 0,
@@ -689,7 +710,6 @@ async def extract_vector(
                 None
             )
 
-
             if raw_embedding is None:
 
                 continue
@@ -736,7 +756,8 @@ async def extract_vector(
 
                 print(
                     f"[EVRIS] Invalid numeric "
-                    f"embedding for face {index + 1}"
+                    f"embedding for face "
+                    f"{index + 1}"
                 )
 
                 continue
@@ -749,7 +770,6 @@ async def extract_vector(
             norm = np.linalg.norm(
                 vector
             )
-
 
             if norm <= 0:
 
@@ -815,7 +835,8 @@ async def extract_vector(
 
         print(
             f"[EVRIS] Accepted "
-            f"{len(embeddings)}/{detected_count} faces | "
+            f"{len(embeddings)}/"
+            f"{detected_count} faces | "
             f"total={total_time:.3f}s"
         )
 
@@ -860,7 +881,6 @@ async def extract_vector(
             repr(e)
         )
 
-
         return {
 
             "success": False,
@@ -882,8 +902,4 @@ async def extract_vector(
         img = None
 
         # Encourage Python to release temporary objects.
-        #
-        # This is useful on a small-memory container.
-        #
         gc.collect()
-
