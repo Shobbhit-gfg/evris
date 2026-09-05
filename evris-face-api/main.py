@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from deepface import DeepFace
+
+from insightface.app import FaceAnalysis
 
 import tempfile
 import os
@@ -15,37 +16,50 @@ import time
 
 app = FastAPI(
     title="EVRIS Face Recognition API",
-    version="2.0.0"
+    version="3.0.0"
 )
 
 
 # ============================================================
 # CORS
 # ============================================================
-# IMPORTANT:
-# Your current Vercel deployment is:
-# https://evris-f1zjytuzh-shobhhit.vercel.app
-#
-# The browser was receiving HTTP 200 from Render, but the
-# response was blocked because this origin was not allowed.
-# ============================================================
 
 app.add_middleware(
     CORSMiddleware,
 
-    # Allow the production frontend and local development
     allow_origins=[
         "https://evris.vercel.app",
         "http://localhost:3000",
     ],
 
-    # Automatically allow Vercel preview/deployment URLs
+    # Allow Vercel preview/deployment URLs
     allow_origin_regex=r"https://.*\.vercel\.app",
 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+MAX_WIDTH = 1200
+
+MIN_FACE_WIDTH = 15
+MIN_FACE_HEIGHT = 15
+
+EMBEDDING_DIMENSIONS = 512
+
+MODEL_NAME = "buffalo_l"
+DETECTOR_NAME = "SCRFD"
+
+# CPU is intentionally used for Render compatibility.
+PROVIDERS = ["CPUExecutionProvider"]
+
+DET_SIZE = (640, 640)
+
 
 # ============================================================
 # DEBUG DIRECTORY
@@ -55,17 +69,104 @@ os.makedirs("debug_faces", exist_ok=True)
 
 
 # ============================================================
+# INSIGHTFACE MODEL
+# ============================================================
+#
+# IMPORTANT:
+# The model is loaded ONCE when the FastAPI application starts.
+#
+# We do NOT initialize FaceAnalysis inside /extract-vector.
+#
+# This is critical for performance because loading Buffalo_L
+# for every uploaded image would be extremely slow.
+# ============================================================
+
+print("")
+print("================================================")
+print("EVRIS FACE API")
+print("================================================")
+print("Initializing InsightFace...")
+print("Model:", MODEL_NAME)
+print("Detector:", DETECTOR_NAME)
+print("Providers:", PROVIDERS)
+print("Detection size:", DET_SIZE)
+print("================================================")
+
+
+model_start_time = time.time()
+
+try:
+
+    face_app = FaceAnalysis(
+        name=MODEL_NAME,
+        providers=PROVIDERS
+    )
+
+    face_app.prepare(
+        ctx_id=0,
+        det_size=DET_SIZE
+    )
+
+    model_load_time = time.time() - model_start_time
+
+    print("✅ InsightFace initialized successfully")
+    print(
+        "Model load time:",
+        round(model_load_time, 2),
+        "seconds"
+    )
+
+except Exception as e:
+
+    face_app = None
+
+    print("")
+    print("================================================")
+    print("❌ INSIGHTFACE INITIALIZATION FAILED")
+    print("================================================")
+    print(str(e))
+    print("================================================")
+
+
+# ============================================================
 # HOME
 # ============================================================
 
 @app.get("/")
 def home():
+
     return {
         "status": "EVRIS Face API Running",
         "service": "Face Embedding Service",
-        "model": "Facenet512",
-        "detector": "opencv",
-        "dimensions": 512
+        "model": "Buffalo_L",
+        "detector": "SCRFD",
+        "dimensions": EMBEDDING_DIMENSIONS,
+        "runtime": "ONNX Runtime",
+        "provider": "CPUExecutionProvider"
+    }
+
+
+# ============================================================
+# HEALTH CHECK
+# ============================================================
+
+@app.get("/health")
+def health():
+
+    if face_app is None:
+
+        return {
+            "status": "unhealthy",
+            "model_loaded": False
+        }
+
+    return {
+        "status": "healthy",
+        "model_loaded": True,
+        "model": "Buffalo_L",
+        "detector": "SCRFD",
+        "dimensions": EMBEDDING_DIMENSIONS,
+        "provider": "CPUExecutionProvider"
     }
 
 
@@ -77,215 +178,302 @@ def home():
 async def extract_vector(file: UploadFile = File(...)):
 
     start_time = time.time()
+
     temp_path = None
 
     try:
 
-        # ----------------------------------------------------
-        # 1. Validate file
-        # ----------------------------------------------------
+        # ====================================================
+        # 0. Check model
+        # ====================================================
+
+        if face_app is None:
+
+            return {
+                "success": False,
+                "error": "Face recognition model is not initialized."
+            }
+
+
+        # ====================================================
+        # 1. Validate filename
+        # ====================================================
 
         if not file.filename:
+
             return {
                 "success": False,
                 "error": "No filename supplied."
             }
 
-        suffix = os.path.splitext(file.filename)[1].lower()
 
-        if suffix not in [".jpg", ".jpeg", ".png", ".webp"]:
+        suffix = os.path.splitext(
+            file.filename
+        )[1].lower()
+
+
+        if suffix not in [
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp"
+        ]:
+
             suffix = ".jpg"
 
 
-        # ----------------------------------------------------
-        # 2. Save uploaded image temporarily
-        # ----------------------------------------------------
+        # ====================================================
+        # 2. Read uploaded file
+        # ====================================================
+
+        contents = await file.read()
+
+
+        if not contents:
+
+            return {
+                "success": False,
+                "error": "Uploaded file is empty."
+            }
+
+
+        # ====================================================
+        # 3. Save temporary file
+        # ====================================================
 
         with tempfile.NamedTemporaryFile(
             delete=False,
             suffix=suffix
         ) as temp_file:
 
-            contents = await file.read()
-
-            if not contents:
-                return {
-                    "success": False,
-                    "error": "Uploaded file is empty."
-                }
-
             temp_file.write(contents)
 
             temp_path = temp_file.name
 
 
-        # ----------------------------------------------------
-        # 3. Read image with OpenCV
-        # ----------------------------------------------------
+        # ====================================================
+        # 4. Read image
+        # ====================================================
 
-        img = cv2.imread(temp_path)
+        preprocess_start = time.time()
+
+        img = cv2.imread(
+            temp_path
+        )
+
 
         if img is None:
+
             return {
                 "success": False,
                 "error": "Unable to read uploaded image."
             }
 
 
-        # ----------------------------------------------------
-        # Resize large images
-        # ----------------------------------------------------
+        original_height, original_width = img.shape[:2]
 
-        MAX_WIDTH = 1200
+
+        # ====================================================
+        # 5. Resize large images
+        # ====================================================
+
+        resized = False
 
         if img.shape[1] > MAX_WIDTH:
 
             scale = MAX_WIDTH / img.shape[1]
 
+            new_width = int(
+                img.shape[1] * scale
+            )
+
+            new_height = int(
+                img.shape[0] * scale
+            )
+
             img = cv2.resize(
                 img,
                 (
-                    int(img.shape[1] * scale),
-                    int(img.shape[0] * scale)
-                )
+                    new_width,
+                    new_height
+                ),
+                interpolation=cv2.INTER_AREA
             )
 
-            cv2.imwrite(
-                temp_path,
-                img
-            )
-
-            print("\nIMAGE RESIZED")
-            print("NEW WIDTH:", img.shape[1])
-            print("NEW HEIGHT:", img.shape[0])
+            resized = True
 
 
         height, width = img.shape[:2]
 
-
-        # ----------------------------------------------------
-        # Debug information
-        # ----------------------------------------------------
-
-        print("\n")
-        print("================================================")
-        print("EVRIS FACE EXTRACTION (RENDER SAFE)")
-        print("================================================")
-        print("FILE:", file.filename)
-        print("WIDTH:", width)
-        print("HEIGHT:", height)
-        print("MODEL: Facenet512")
-        print("DETECTOR: opencv")
-        print("================================================")
-
-
-        # ----------------------------------------------------
-        # 4. Generate embeddings
-        # ----------------------------------------------------
-
-        results = DeepFace.represent(
-            img_path=temp_path,
-            model_name="Facenet512",
-            detector_backend="opencv",
-            enforce_detection=False,
-            align=True,
-            normalization="Facenet"
+        preprocess_time = (
+            time.time() - preprocess_start
         )
 
 
-        # ----------------------------------------------------
-        # 5. Make sure result is a list
-        # ----------------------------------------------------
+        # ====================================================
+        # 6. Debug information
+        # ====================================================
 
-        if not isinstance(results, list):
-            results = [results]
+        print("")
+        print("================================================")
+        print("EVRIS FACE EXTRACTION")
+        print("================================================")
+        print("FILE:", file.filename)
+
+        print(
+            "ORIGINAL SIZE:",
+            f"{original_width}x{original_height}"
+        )
+
+        print(
+            "PROCESSING SIZE:",
+            f"{width}x{height}"
+        )
+
+        print(
+            "RESIZED:",
+            resized
+        )
+
+        print("MODEL:", MODEL_NAME)
+        print("DETECTOR:", DETECTOR_NAME)
+        print("DIMENSIONS:", EMBEDDING_DIMENSIONS)
+
+        print(
+            "PREPROCESS TIME:",
+            round(preprocess_time, 3),
+            "seconds"
+        )
+
+        print("================================================")
 
 
-        print("FACES DETECTED:", len(results))
+        # ====================================================
+        # 7. Face detection + embedding extraction
+        # ====================================================
+
+        inference_start = time.time()
+
+        faces = face_app.get(
+            img
+        )
+
+        inference_time = (
+            time.time() - inference_start
+        )
 
 
-        # ----------------------------------------------------
-        # 6. Process every detected face
-        # ----------------------------------------------------
+        print(
+            "FACES DETECTED:",
+            len(faces)
+        )
+
+        print(
+            "INFERENCE TIME:",
+            round(inference_time, 3),
+            "seconds"
+        )
+
+
+        # ====================================================
+        # 8. Process detected faces
+        # ====================================================
 
         embeddings = []
+
         detected_faces = []
 
 
-        for i, res in enumerate(results):
+        for i, face in enumerate(faces):
 
-            # ------------------------------------------------
-            # Face bounding box
-            # ------------------------------------------------
+            # =================================================
+            # Bounding box
+            # =================================================
 
-            face_area = res.get(
-                "facial_area",
-                {}
-            )
+            bbox = face.bbox
 
-            x = int(
-                face_area.get(
-                    "x",
-                    0
+
+            if bbox is None or len(bbox) < 4:
+
+                print(
+                    f"❌ FACE {i + 1}: Invalid bounding box"
+                )
+
+                continue
+
+
+            x1 = int(
+                max(
+                    0,
+                    bbox[0]
                 )
             )
 
-            y = int(
-                face_area.get(
-                    "y",
-                    0
+            y1 = int(
+                max(
+                    0,
+                    bbox[1]
                 )
             )
 
-            w = int(
-                face_area.get(
-                    "w",
-                    0
+            x2 = int(
+                min(
+                    width,
+                    bbox[2]
                 )
             )
 
-            h = int(
-                face_area.get(
-                    "h",
-                    0
+            y2 = int(
+                min(
+                    height,
+                    bbox[3]
                 )
             )
 
 
-            # ------------------------------------------------
+            face_width = x2 - x1
+            face_height = y2 - y1
+
+
+            # =================================================
             # Detection confidence
-            # ------------------------------------------------
+            # =================================================
 
             confidence = float(
-                face_area.get(
-                    "confidence",
-                    res.get(
-                        "face_confidence",
-                        0
-                    )
-                ) or 0
+                getattr(
+                    face,
+                    "det_score",
+                    0.0
+                )
             )
 
 
-            # ------------------------------------------------
-            # Debug face information
-            # ------------------------------------------------
+            # =================================================
+            # Debug information
+            # =================================================
 
-            print("\n--------------------------------")
+            print("")
+            print("--------------------------------")
             print(f"FACE {i + 1}")
             print("--------------------------------")
-            print("x:", x)
-            print("y:", y)
-            print("w:", w)
-            print("h:", h)
-            print("confidence:", confidence)
+            print("x:", x1)
+            print("y:", y1)
+            print("width:", face_width)
+            print("height:", face_height)
+            print(
+                "confidence:",
+                round(
+                    confidence,
+                    4
+                )
+            )
 
 
-            # ------------------------------------------------
-            # Ignore invalid detections
-            # ------------------------------------------------
+            # =================================================
+            # Validate dimensions
+            # =================================================
 
-            if w <= 0 or h <= 0:
+            if face_width <= 0 or face_height <= 0:
 
                 print(
                     "❌ Invalid face dimensions"
@@ -294,11 +482,15 @@ async def extract_vector(file: UploadFile = File(...)):
                 continue
 
 
-            # ------------------------------------------------
-            # Ignore extremely small detections
-            # ------------------------------------------------
+            # =================================================
+            # Ignore extremely small faces
+            # =================================================
 
-            if w < 15 or h < 15:
+            if (
+                face_width < MIN_FACE_WIDTH
+                or
+                face_height < MIN_FACE_HEIGHT
+            ):
 
                 print(
                     "⚠️ Extremely small face ignored"
@@ -307,13 +499,16 @@ async def extract_vector(file: UploadFile = File(...)):
                 continue
 
 
-            # ------------------------------------------------
+            # =================================================
             # Get embedding
-            # ------------------------------------------------
+            # =================================================
 
-            raw_embedding = res.get(
-                "embedding"
+            raw_embedding = getattr(
+                face,
+                "embedding",
+                None
             )
+
 
             if raw_embedding is None:
 
@@ -324,9 +519,9 @@ async def extract_vector(file: UploadFile = File(...)):
                 continue
 
 
-            # ------------------------------------------------
-            # Convert embedding to NumPy
-            # ------------------------------------------------
+            # =================================================
+            # Convert to NumPy
+            # =================================================
 
             vector = np.asarray(
                 raw_embedding,
@@ -334,11 +529,21 @@ async def extract_vector(file: UploadFile = File(...)):
             )
 
 
-            # ------------------------------------------------
+            # =================================================
             # Verify dimensions
-            # ------------------------------------------------
+            # =================================================
 
-            if vector.shape[0] != 512:
+            if vector.ndim != 1:
+
+                print(
+                    "❌ Invalid embedding shape:",
+                    vector.shape
+                )
+
+                continue
+
+
+            if vector.shape[0] != EMBEDDING_DIMENSIONS:
 
                 print(
                     "❌ Invalid embedding dimension:",
@@ -348,9 +553,9 @@ async def extract_vector(file: UploadFile = File(...)):
                 continue
 
 
-            # ------------------------------------------------
+            # =================================================
             # Remove NaN / Infinity
-            # ------------------------------------------------
+            # =================================================
 
             if not np.all(
                 np.isfinite(vector)
@@ -363,13 +568,14 @@ async def extract_vector(file: UploadFile = File(...)):
                 continue
 
 
-            # ------------------------------------------------
+            # =================================================
             # L2 NORMALIZATION
-            # ------------------------------------------------
+            # =================================================
 
             norm = np.linalg.norm(
                 vector
             )
+
 
             if norm <= 0:
 
@@ -387,9 +593,9 @@ async def extract_vector(file: UploadFile = File(...)):
             )
 
 
-            # ------------------------------------------------
-            # Final numerical validation
-            # ------------------------------------------------
+            # =================================================
+            # Final validation
+            # =================================================
 
             final_norm = np.linalg.norm(
                 normalized_vector
@@ -412,25 +618,25 @@ async def extract_vector(file: UploadFile = File(...)):
             )
 
 
-            # ------------------------------------------------
+            # =================================================
             # Store embedding
-            # ------------------------------------------------
+            # =================================================
 
             embeddings.append(
                 normalized_vector.tolist()
             )
 
 
-            # ------------------------------------------------
+            # =================================================
             # Store face information
-            # ------------------------------------------------
+            # =================================================
 
             detected_faces.append({
                 "index": i + 1,
-                "x": x,
-                "y": y,
-                "width": w,
-                "height": h,
+                "x": x1,
+                "y": y1,
+                "width": face_width,
+                "height": face_height,
                 "confidence": confidence
             })
 
@@ -440,41 +646,87 @@ async def extract_vector(file: UploadFile = File(...)):
             )
 
 
-        # ----------------------------------------------------
-        # 7. Final response
-        # ----------------------------------------------------
+        # ====================================================
+        # 9. Final timing
+        # ====================================================
 
-        print("\n")
+        total_time = (
+            time.time() - start_time
+        )
+
+
+        # ====================================================
+        # 10. Final logs
+        # ====================================================
+
+        print("")
         print("================================================")
         print("EXTRACTION COMPLETE")
         print("================================================")
+
         print(
             "Detected:",
-            len(results)
+            len(faces)
         )
+
         print(
             "Accepted:",
             len(embeddings)
         )
+
         print(
-            "TOTAL TIME:",
+            "Preprocess:",
             round(
-                time.time() - start_time,
-                2
+                preprocess_time,
+                3
             ),
             "seconds"
         )
+
+        print(
+            "Inference:",
+            round(
+                inference_time,
+                3
+            ),
+            "seconds"
+        )
+
+        print(
+            "Total:",
+            round(
+                total_time,
+                3
+            ),
+            "seconds"
+        )
+
         print("================================================")
 
 
+        # ====================================================
+        # 11. Final response
+        # ====================================================
+
         return {
             "success": True,
-            "model": "Facenet512",
-            "detector": "opencv",
-            "dimensions": 512,
+
+            "model": "Buffalo_L",
+
+            "detector": "SCRFD",
+
+            "dimensions": EMBEDDING_DIMENSIONS,
+
             "face_count": len(embeddings),
+
             "faces": detected_faces,
-            "embeddings": embeddings
+
+            "embeddings": embeddings,
+
+            "processing_time": round(
+                total_time,
+                3
+            )
         }
 
 
@@ -484,11 +736,18 @@ async def extract_vector(file: UploadFile = File(...)):
 
     except Exception as e:
 
-        print("\n")
+        print("")
         print("================================================")
         print("❌ EVRIS FACE API ERROR")
         print("================================================")
-        print(str(e))
+        print(
+            "FILE:",
+            file.filename if file else "unknown"
+        )
+        print(
+            "ERROR:",
+            str(e)
+        )
         print("================================================")
 
 
@@ -522,3 +781,4 @@ async def extract_vector(file: UploadFile = File(...)):
                     "⚠️ Temporary file cleanup failed:",
                     cleanup_error
                 )
+

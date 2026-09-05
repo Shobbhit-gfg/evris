@@ -44,3 +44,7 @@ next-env.d.ts
 evris-face-api/venv/
 venv/
 __pycache__/
+
+# Local test/model installation files
+*.whl
+test.jpg

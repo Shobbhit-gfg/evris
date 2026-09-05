@@ -6,10 +6,11 @@ numpy==1.26.4
 opencv-python-headless==4.9.0.80
 pillow==10.2.0
 
-tensorflow-cpu==2.16.1
-tf-keras==2.16.0
+insightface==0.7.3
+onnxruntime==1.18.1
 
-deepface==0.0.90
-retina-face==0.0.18
+scikit-image==0.22.0
+scipy==1.11.4
+easydict==1.13
 
 python-multipart==0.0.9
