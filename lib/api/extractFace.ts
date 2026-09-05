@@ -3,7 +3,7 @@ const USE_LOCAL_API = false;
 
 const FACE_API_URL = USE_LOCAL_API
   ? "http://127.0.0.1:8000"
-  : "https://evris.onrender.com";
+  : "https://evris-1.onrender.com";
 
 export type FaceEmbeddingResponse = {
   success: boolean;
