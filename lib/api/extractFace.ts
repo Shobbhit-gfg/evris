@@ -1,9 +1,10 @@
-// Set to true if you are running FastAPI locally via uvicorn, false if testing against Render
+// Set to true if you are running FastAPI locally via uvicorn.
+// Set to false when using the deployed Render Face API.
 const USE_LOCAL_API = false;
 
 const FACE_API_URL = USE_LOCAL_API
   ? "http://127.0.0.1:8000"
-  : "https://evris-1.onrender.com";
+  : "https://evris.onrender.com";
 
 export type FaceEmbeddingResponse = {
   success: boolean;
@@ -16,15 +17,95 @@ export type FaceEmbeddingResponse = {
 };
 
 /**
- * Extracts multiple face embeddings from an image (ideal for event uploads & multi-face crowds).
+ * Warm up the EVRIS Face API.
+ *
+ * This sends a lightweight request to the API so that
+ * Render can wake the service from sleep before the
+ * user performs a face search or event upload.
+ *
+ * This function never blocks the application.
+ */
+export async function warmUpFaceAPI(
+  retries = 3,
+  delayMs = 2000
+): Promise<boolean> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      console.log(
+        `🔥 Warming up EVRIS Face API... (${attempt}/${retries})`
+      );
+
+      const response = await fetch(`${FACE_API_URL}/health`, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+
+        console.log(
+          "✅ EVRIS Face API is ready:",
+          data
+        );
+
+        return true;
+      }
+
+      console.warn(
+        `⚠️ Face API warm-up returned status ${response.status}`
+      );
+    } catch (error) {
+      console.warn(
+        `⚠️ Face API warm-up failed (attempt ${attempt}):`,
+        error
+      );
+    }
+
+    // Wait before trying again.
+    if (attempt < retries) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, delayMs)
+      );
+    }
+  }
+
+  console.warn(
+    "❌ EVRIS Face API could not be warmed up."
+  );
+
+  return false;
+}
+
+/**
+ * Automatically warm up the Face API when this module
+ * is loaded in the browser.
+ *
+ * This runs in the background and does NOT block EVRIS.
+ */
+if (typeof window !== "undefined") {
+  void warmUpFaceAPI();
+}
+
+/**
+ * Extracts multiple face embeddings from an image.
+ *
+ * Ideal for:
+ * - Event photo uploads
+ * - Group photos
+ * - Crowd photos
+ * - Multiple faces in a single image
  */
 export async function getFaceEmbeddingsFromServer(
   file: File
 ): Promise<number[][]> {
   const formData = new FormData();
+
   formData.append("file", file);
 
-  console.log(`🐍 Sending image to Face API (${FACE_API_URL}):`, file.name);
+  console.log(
+    `🐍 Sending image to Face API (${FACE_API_URL}):`,
+    file.name
+  );
 
   const response = await fetch(
     `${FACE_API_URL}/extract-vector`,
@@ -40,13 +121,18 @@ export async function getFaceEmbeddingsFromServer(
     );
   }
 
-  const data: FaceEmbeddingResponse = await response.json();
+  const data: FaceEmbeddingResponse =
+    await response.json();
 
-  console.log("🐍 Face API response:", data);
+  console.log(
+    "🐍 Face API response:",
+    data
+  );
 
   if (!data.success) {
     throw new Error(
-      data.error || "Face extraction failed."
+      data.error ||
+        "Face extraction failed."
     );
   }
 
@@ -56,21 +142,36 @@ export async function getFaceEmbeddingsFromServer(
     `🧠 Faces returned by Python: ${embeddings.length}`
   );
 
-  return embeddings.filter(
+  /**
+   * Only accept valid 512-dimensional embeddings.
+   */
+  const validEmbeddings = embeddings.filter(
     (embedding) =>
       Array.isArray(embedding) &&
       embedding.length === 512
   );
+
+  console.log(
+    `✅ Valid 512-D embeddings: ${validEmbeddings.length}`
+  );
+
+  return validEmbeddings;
 }
 
 /**
- * Extracts a single primary face embedding (backward compatible wrapper for selfie searches).
+ * Extracts a single primary face embedding.
+ *
+ * Used for selfie-based face searches.
+ *
+ * This wrapper is backward compatible with the existing
+ * EVRIS face-search implementation.
  */
 export async function getFaceEmbeddingFromServer(
   file: File
 ): Promise<number[] | null> {
   try {
-    const embeddings = await getFaceEmbeddingsFromServer(file);
+    const embeddings =
+      await getFaceEmbeddingsFromServer(file);
 
     if (embeddings.length === 0) {
       throw new Error(
@@ -78,13 +179,22 @@ export async function getFaceEmbeddingFromServer(
       );
     }
 
-    console.log("✅ Received valid 512-dimensional face vector");
+    console.log(
+      "✅ Received valid 512-dimensional face vector"
+    );
+
     return embeddings[0];
   } catch (error: any) {
-    console.error("❌ Face extraction failed:", error);
+    console.error(
+      "❌ Face extraction failed:",
+      error
+    );
+
     const errorMessage =
       error?.message ||
       "Unable to process face. Please try a different photo.";
+
     throw new Error(errorMessage);
   }
 }
+
